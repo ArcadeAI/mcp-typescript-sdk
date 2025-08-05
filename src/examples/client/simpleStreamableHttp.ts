@@ -18,6 +18,8 @@ import {
   ResourceLink,
   ReadResourceRequest,
   ReadResourceResultSchema,
+  ErrorCode,
+  McpError,
 } from '../../types.js';
 import { getDisplayName } from '../../shared/metadataUtils.js';
 import Ajv from "ajv";
@@ -217,7 +219,9 @@ async function connect(url?: string): Promise<void> {
       version: '1.0.0'
     }, {
       capabilities: {
-        elicitation: {},
+        elicitation: {
+          form: {}
+        },
       },
     });
     client.onerror = (error) => {
@@ -226,6 +230,12 @@ async function connect(url?: string): Promise<void> {
 
     // Set up elicitation request handler with proper validation
     client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      if (request.params.mode !== 'form') {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Unsupported elicitation mode: ${request.params.mode}`
+        )
+      }
       console.log('\n🔔 Elicitation Request Received:');
       console.log(`Message: ${request.params.message}`);
       console.log('Requested Schema:');

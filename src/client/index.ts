@@ -1,5 +1,6 @@
 import {
   mergeCapabilities,
+  ProgressCallback,
   Protocol,
   ProtocolOptions,
   RequestOptions,
@@ -42,6 +43,7 @@ import {
   Tool,
   ErrorCode,
   McpError,
+  ElicitTrackResultSchema,
 } from "../types.js";
 import Ajv from "ajv";
 import type { ValidateFunction } from "ajv";
@@ -257,6 +259,14 @@ export class Client<
         if (!this._serverCapabilities?.completions) {
           throw new Error(
             `Server does not support completions (required for ${method})`,
+          );
+        }
+        break;
+
+      case "elicitation/track":
+        if (!this._capabilities.elicitation?.url) {
+          throw new Error(
+            `Client does not support URL elicitation (required for ${method})`,
           );
         }
         break;
@@ -515,5 +525,25 @@ export class Client<
 
   async sendRootsListChanged() {
     return this.notification({ method: "notifications/roots/list_changed" });
+  }
+
+  async trackElicitation(elicitationId: string, progressCallback?: ProgressCallback, options?: RequestOptions) {
+    options = {
+      ...options,
+      onprogress: progressCallback,
+    }
+    await this.request(
+      {
+        method: "elicitation/track",
+        params: {
+          elicitationId,
+          _meta: {
+            progressToken: 0, // This will be overridden by the client's internal progress token, but is required for typescript
+          },
+        },
+      },
+      ElicitTrackResultSchema,
+      options,
+    );
   }
 }

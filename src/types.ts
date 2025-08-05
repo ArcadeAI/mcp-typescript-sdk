@@ -130,6 +130,7 @@ export enum ErrorCode {
   MethodNotFound = -32601,
   InvalidParams = -32602,
   InternalError = -32603,
+  ElicitationRequired = -32604,
 }
 
 /**
@@ -243,7 +244,16 @@ export const ClientCapabilitiesSchema = z
     /**
      * Present if the client supports eliciting user input.
      */
-    elicitation: z.optional(z.object({}).passthrough()),
+    elicitation: z.optional(z.object({
+      /**
+       * Whether the client supports submitting form data.
+       */
+      form: z.optional(z.object({}).passthrough()),
+      /**
+       * Whether the client supports eliciting user input from a URL.
+       */
+      url: z.optional(z.object({}).passthrough()),
+    }).passthrough()),
     /**
      * Present if the client supports listing roots.
      */
@@ -1228,27 +1238,106 @@ export const PrimitiveSchemaDefinitionSchema = z.union([
 ]);
 
 /**
+ * Base parameters for elicitation requests.
+ */
+export const ElicitRequestParamsSchema = BaseRequestParamsSchema.extend({
+  /**
+   * The mode of elicitation.
+   * - "form": In-band structured data collection with optional schema validation
+   * - "url": Out-of-band interaction via URL navigation
+   */
+  mode: z.enum(["form", "url"]),
+  /**
+   * The message to present to the user.
+   * For form mode: Describes what information is being requested.
+   * For url mode: Explains why the interaction is needed.
+   */
+  message: z.string(),
+});
+
+/**
+ * Parameters for form-based elicitation.
+ */
+export const ElicitRequestFormParamsSchema = ElicitRequestParamsSchema.extend({
+  /**
+   * The elicitation mode.
+   */
+  mode: z.literal("form"),
+  /**
+   * A restricted subset of JSON Schema.
+   * Only top-level properties are allowed, without nesting.
+   */
+  requestedSchema: z
+    .object({
+      type: z.literal("object"),
+      properties: z.record(z.string(), PrimitiveSchemaDefinitionSchema),
+      required: z.optional(z.array(z.string())),
+    })
+    .passthrough(),
+});
+
+/**
+ * Parameters for URL-based elicitation.
+ */
+export const ElicitRequestURLParamsSchema = ElicitRequestParamsSchema.extend({
+  /**
+   * The elicitation mode.
+   */
+  mode: z.literal("url"),
+  /**
+   * The ID of the elicitation, which must be unique within the context of the server.
+   * The client MUST treat this ID as an opaque value.
+   */
+  elicitationId: z.string(),
+  /**
+   * The URL that the user should navigate to.
+   */
+  url: z.string().url(),
+});
+
+/**
  * A request from the server to elicit user input via the client.
- * The client should present the message and form fields to the user.
+ * The client should present the message and form fields to the user (form mode)
+ * or navigate to a URL (url mode).
  */
 export const ElicitRequestSchema = RequestSchema.extend({
   method: z.literal("elicitation/create"),
-  params: BaseRequestParamsSchema.extend({
+  params: z.union([ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema]),
+});
+
+/**
+ * Parameters for tracking elicitation progress.
+ */
+export const ElicitTrackParamsSchema = BaseRequestParamsSchema.extend({
+  _meta: RequestMetaSchema.extend({
     /**
-     * The message to present to the user.
+     * The progress token as specified in the Progress capability, required in this request.
      */
-    message: z.string(),
-    /**
-     * The schema for the requested user input.
-     */
-    requestedSchema: z
-      .object({
-        type: z.literal("object"),
-        properties: z.record(z.string(), PrimitiveSchemaDefinitionSchema),
-        required: z.optional(z.array(z.string())),
-      })
-      .passthrough(),
+    progressToken: ProgressTokenSchema,
   }),
+  /**
+   * The ID of the elicitation to track.
+   */
+  elicitationId: z.string(),
+});
+
+/**
+ * A request from the client to track the progress of an elicitation.
+ */
+export const ElicitTrackRequestSchema = RequestSchema.extend({
+  method: z.literal("elicitation/track"),
+  params: ElicitTrackParamsSchema,
+});
+
+/**
+ * The server's response to an elicitation/track request from the client.
+ */
+export const ElicitTrackResultSchema = ResultSchema.extend({
+  /**
+   * The status of the elicitation.
+   * - "complete": The elicitation has been completed
+   */
+  status: z.literal("complete"),
 });
 
 /**
@@ -1256,11 +1345,16 @@ export const ElicitRequestSchema = RequestSchema.extend({
  */
 export const ElicitResultSchema = ResultSchema.extend({
   /**
-   * The user's response action.
+   * The user action in response to the elicitation.
+   * - "accept": User submitted the form/confirmed the action
+   * - "decline": User explicitly declined the action
+   * - "cancel": User dismissed without making an explicit choice
    */
   action: z.enum(["accept", "decline", "cancel"]),
   /**
-   * The collected user input content (only present if action is "accept").
+   * The submitted form data, only present when action is "accept" and mode was "form".
+   * Contains values matching the requested schema.
+   * Omitted for out-of-band mode responses.
    */
   content: z.optional(z.record(z.string(), z.unknown())),
 });
@@ -1411,6 +1505,7 @@ export const ClientRequestSchema = z.union([
   UnsubscribeRequestSchema,
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ElicitTrackRequestSchema,
 ]);
 
 export const ClientNotificationSchema = z.union([
@@ -1456,6 +1551,7 @@ export const ServerResultSchema = z.union([
   ReadResourceResultSchema,
   CallToolResultSchema,
   ListToolsResultSchema,
+  ElicitTrackResultSchema,
 ]);
 
 export class McpError extends Error {
@@ -1466,6 +1562,44 @@ export class McpError extends Error {
   ) {
     super(`MCP error ${code}: ${message}`);
     this.name = "McpError";
+  }
+
+  /**
+   * Factory method to create the appropriate error type based on the error code and data
+   */
+  static fromError(code: number, message: string, data?: unknown): McpError {
+    // Check for specific error types
+    if (code === ErrorCode.ElicitationRequired && data) {
+      const errorData = data as { elicitations?: unknown[] };
+      if (errorData.elicitations) {
+        return new ElicitationRequiredError(
+          errorData.elicitations as ElicitRequestURLParams[],
+          message
+        );
+      }
+    }
+
+    // Default to generic McpError
+    return new McpError(code, message, data);
+  }
+}
+
+/**
+ * Specialized error type for elicitation required errors.
+ * This makes it nicer for the client to handle since there is specific data to work with instead of just a code to check against.
+ */
+export class ElicitationRequiredError extends McpError {
+  constructor(
+    elicitations: ElicitRequestURLParams[],
+    message: string = `Elicitation${elicitations.length > 1 ? 's' : ''} required`,
+  ) {
+    super(ErrorCode.ElicitationRequired, message, {
+      elicitations: elicitations
+    });
+  }
+
+  get elicitations(): ElicitRequestURLParams[] {
+    return (this.data as { elicitations: ElicitRequestURLParams[] })?.elicitations ?? [];
   }
 }
 
@@ -1615,7 +1749,13 @@ export type StringSchema = Infer<typeof StringSchemaSchema>;
 export type NumberSchema = Infer<typeof NumberSchemaSchema>;
 export type EnumSchema = Infer<typeof EnumSchemaSchema>;
 export type PrimitiveSchemaDefinition = Infer<typeof PrimitiveSchemaDefinitionSchema>;
+export type ElicitRequestParams = Infer<typeof ElicitRequestParamsSchema>;
+export type ElicitRequestFormParams = Infer<typeof ElicitRequestFormParamsSchema>;
+export type ElicitRequestURLParams = Infer<typeof ElicitRequestURLParamsSchema>;
 export type ElicitRequest = Infer<typeof ElicitRequestSchema>;
+export type ElicitTrackParams = Infer<typeof ElicitTrackParamsSchema>;
+export type ElicitTrackRequest = Infer<typeof ElicitTrackRequestSchema>;
+export type ElicitTrackResult = Infer<typeof ElicitTrackResultSchema>;
 export type ElicitResult = Infer<typeof ElicitResultSchema>;
 
 /* Autocomplete */

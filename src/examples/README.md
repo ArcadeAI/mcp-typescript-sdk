@@ -4,16 +4,28 @@ This directory contains example implementations of MCP clients and servers using
 
 ## Table of Contents
 
-- [Client Implementations](#client-implementations)
-  - [Streamable HTTP Client](#streamable-http-client)
-  - [Backwards Compatible Client](#backwards-compatible-client)
-- [Server Implementations](#server-implementations)
-  - [Single Node Deployment](#single-node-deployment)
-    - [Streamable HTTP Transport](#streamable-http-transport)
-    - [Deprecated SSE Transport](#deprecated-sse-transport)
-    - [Backwards Compatible Server](#streamable-http-backwards-compatible-server-with-sse)
-  - [Multi-Node Deployment](#multi-node-deployment)
-- [Backwards Compatibility](#testing-streamable-http-backwards-compatibility-with-sse)
+- [MCP TypeScript SDK Examples](#mcp-typescript-sdk-examples)
+  - [Table of Contents](#table-of-contents)
+  - [Client Implementations](#client-implementations)
+    - [Streamable HTTP Client](#streamable-http-client)
+    - [Backwards Compatible Client](#backwards-compatible-client)
+  - [Server Implementations](#server-implementations)
+    - [Single Node Deployment](#single-node-deployment)
+      - [Streamable HTTP Transport](#streamable-http-transport)
+        - [Simple Streamable HTTP Server](#simple-streamable-http-server)
+        - [JSON Response Mode Server](#json-response-mode-server)
+        - [Streamable HTTP with server notifications](#streamable-http-with-server-notifications)
+        - [Elicitation Example](#elicitation-example)
+      - [Deprecated SSE Transport](#deprecated-sse-transport)
+      - [Streamable Http Backwards Compatible Server with SSE](#streamable-http-backwards-compatible-server-with-sse)
+    - [Multi-Node Deployment](#multi-node-deployment)
+      - [Stateless Mode](#stateless-mode)
+        - [Implementation](#implementation)
+      - [Persistent Storage Mode](#persistent-storage-mode)
+        - [Implementation](#implementation-1)
+      - [Streamable HTTP with Distributed Message Routing](#streamable-http-with-distributed-message-routing)
+  - [Backwards Compatibility](#backwards-compatibility)
+    - [Testing Streamable HTTP Backwards Compatibility with SSE](#testing-streamable-http-backwards-compatibility-with-sse)
 
 ## Client Implementations
 
@@ -104,6 +116,26 @@ A server that demonstrates server notifications using Streamable HTTP.
 
 ```bash
 npx tsx src/examples/server/standaloneSseWithGetStreamableHttp.ts
+```
+
+##### Elicitation Example
+
+A comprehensive example demonstrating both modes of elicitation with OAuth authentication. This example shows:
+
+- OAuth protected MCP server
+- SSE-driven URL-mode elicitation of an API Key on session initialization
+- Form elicitation tools
+- Tools that require direct user interaction via url-mode elicitation (for payment confirmation and for third-party OAuth tokens)
+- Progress tracking of URL-mode elicitations
+
+To run this example:
+
+```bash
+# Start the server with OAuth enabled
+npx tsx src/examples/server/elicitationStreamableHttp.ts --oauth
+
+# In a separate terminal, start the client with OAuth
+npx tsx src/examples/client/elicitationStreamableHttp.ts --oauth
 ```
 
 #### Deprecated SSE Transport

@@ -436,6 +436,7 @@ export abstract class Protocol<
                 ? error["code"]
                 : ErrorCode.InternalError,
               message: error.message ?? "Internal error",
+              ...(error["data"] !== undefined && { data: error["data"] }),
             },
           });
         },
@@ -492,7 +493,7 @@ export abstract class Protocol<
     if (isJSONRPCResponse(response)) {
       handler(response);
     } else {
-      const error = new McpError(
+      const error = McpError.fromError(
         response.error.code,
         response.error.message,
         response.error.data,

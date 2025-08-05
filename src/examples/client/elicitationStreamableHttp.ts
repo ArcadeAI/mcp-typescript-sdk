@@ -10,6 +10,11 @@ import {
   ElicitRequest,
   ElicitResult,
   ResourceLink,
+  ElicitRequestFormParams,
+  ElicitRequestURLParams,
+  McpError,
+  ErrorCode,
+  ElicitationRequiredError,
 } from '../../types.js';
 import { getDisplayName } from '../../shared/metadataUtils.js';
 import Ajv from "ajv";
@@ -38,8 +43,7 @@ if (useOAuth) {
     OAUTH_CALLBACK_URL,
     clientMetadata,
     (redirectUrl: URL) => {
-      console.log(`📌 OAuth redirect handler called - opening browser`);
-      console.log(`Opening browser to: ${redirectUrl.toString()}`);
+      console.log(`🌐 Opening browser for OAuth redirect: ${redirectUrl.toString()}`);
       openBrowser(redirectUrl.toString());
     }
   );
@@ -50,12 +54,26 @@ const readline = createInterface({
   input: process.stdin,
   output: process.stdout
 });
+let abortCommand = new AbortController();
 
 // Global client and transport for interactive commands
 let client: Client | null = null;
 let transport: StreamableHTTPClientTransport | null = null;
 let serverUrl = 'http://localhost:3000/mcp';
 let sessionId: string | undefined = undefined;
+
+// Elicitation queue management
+interface QueuedElicitation {
+  request: ElicitRequest;
+  resolve: (result: ElicitResult) => void;
+  reject: (error: Error) => void;
+}
+
+let isProcessingCommand = false;
+let isProcessingElicitations = false;
+const elicitationQueue: QueuedElicitation[] = [];
+let elicitationQueueSignal: (() => void) | null = null;
+let elicitationsCompleteSignal: (() => void) | null = null;
 
 async function main(): Promise<void> {
   console.log('MCP Interactive Client');
@@ -64,9 +82,28 @@ async function main(): Promise<void> {
   // Connect to server immediately with default settings
   await connect();
 
+  // Start the elicitation loop in the background
+  elicitationLoop().catch(error => {
+    console.error('Unexpected error in elicitation loop:', error);
+    process.exit(1);
+  });
+
+  // Short delay allowing the server to send any SSE elicitations on connection
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  // Wait until we are done processing any initial elicitations
+  await waitForElicitationsToComplete();
+
   // Print help and start the command loop
   printHelp();
-  commandLoop();
+  await commandLoop();
+}
+
+async function waitForElicitationsToComplete(): Promise<void> {
+  // Wait until the queue is empty and nothing is being processed
+  while (elicitationQueue.length > 0 || isProcessingElicitations) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
 }
 
 function printHelp(): void {
@@ -77,13 +114,25 @@ function printHelp(): void {
   console.log('  reconnect                  - Reconnect to the server');
   console.log('  list-tools                 - List available tools');
   console.log('  call-tool <name> [args]    - Call a tool with optional JSON arguments');
-  console.log('  collect-info [type]        - Test elicitation with collect-user-info tool (contact/preferences/feedback)');
+  console.log('  collect-info [type]        - Test form-mode elicitation with collect-user-info tool (contact/preferences/feedback)');
+  console.log('  payment-confirm            - Test url-mode elicitation via error response with payment-confirm tool');
+  console.log('  third-party-auth           - Test tool that requires third-party OAuth credentials');
   console.log('  help                       - Show this help');
   console.log('  quit                       - Exit the program');
 }
 
-function commandLoop(): void {
-  readline.question('\n> ', async (input) => {
+async function commandLoop(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (!isProcessingElicitations) {
+      resolve();
+    } else {
+      elicitationsCompleteSignal = resolve;
+    }
+  });
+
+  readline.question('\n> ', { signal: abortCommand.signal }, async (input) => {
+    isProcessingCommand = true;
+
     const args = input.trim().split(/\s+/);
     const command = args[0]?.toLowerCase();
 
@@ -130,6 +179,14 @@ function commandLoop(): void {
           await callCollectInfoTool(args[1] || 'contact');
           break;
 
+        case 'payment-confirm':
+          await callPaymentConfirmTool();
+          break;
+
+        case 'third-party-auth':
+          await callThirdPartyAuthTool();
+          break;
+
         case 'help':
           printHelp();
           break;
@@ -147,16 +204,57 @@ function commandLoop(): void {
       }
     } catch (error) {
       console.error(`Error executing command: ${error}`);
+    } finally {
+      isProcessingCommand = false;
     }
 
-    // Continue the command loop
-    commandLoop();
+    // Process another command after we've processed the this one
+    await commandLoop();
   });
 }
 
-async function openBrowser(url: string): Promise<void> {
-  console.log(`🌐 Opening browser for authorization: ${url}`);
+async function elicitationLoop(): Promise<void> {
+  while (true) {
+    // Wait until we have elicitations to process
+    await new Promise<void>((resolve) => {
+      if (elicitationQueue.length > 0) {
+        resolve();
+      } else {
+        elicitationQueueSignal = resolve;
+      }
+    });
 
+    isProcessingElicitations = true;
+    abortCommand.abort(); // Abort the command loop if it's running
+
+    // Process all queued elicitations
+    while (elicitationQueue.length > 0) {
+      const queued = elicitationQueue.shift()!;
+      console.log(`📤 Processing queued elicitation (${elicitationQueue.length} remaining)`);
+
+      try {
+        const result = await handleElicitationRequest(queued.request);
+        queued.resolve(result);
+      } catch (error) {
+        queued.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+
+    console.log('✅ All queued elicitations processed. Resuming command loop...\n');
+    isProcessingElicitations = false;
+
+    // Reset the abort controller for the next command loop
+    abortCommand = new AbortController();
+
+    // Resume the command loop
+    if (elicitationsCompleteSignal) {
+      elicitationsCompleteSignal();
+      elicitationsCompleteSignal = null;
+    }
+  }
+}
+
+async function openBrowser(url: string): Promise<void> {
   const command = `open "${url}"`;
 
   exec(command, (error) => {
@@ -167,13 +265,166 @@ async function openBrowser(url: string): Promise<void> {
   });
 }
 
+/**
+ * Enqueues an elicitation request and returns the result.
+ *
+ * This function is used so that our CLI (which can only handle one input request at a time)
+ * can handle elicitation requests and the command loop.
+ *
+ * @param request - The elicitation request to be handled
+ * @returns The elicitation result
+ */
+async function elicitationRequestHandler(request: ElicitRequest): Promise<ElicitResult> {
+  // If we are processing a command, handle this elicitation immediately
+  if (isProcessingCommand) {
+    console.log('📋 Processing elicitation immediately (during command execution)');
+    return await handleElicitationRequest(request);
+  }
+
+  // Otherwise, queue the request to be handled by the elicitation loop
+  console.log(`📥 Queueing elicitation request (queue size will be: ${elicitationQueue.length + 1})`);
+
+  return new Promise<ElicitResult>((resolve, reject) => {
+    elicitationQueue.push({
+      request,
+      resolve,
+      reject
+    });
+
+    // Signal the elicitation loop that there's work to do
+    if (elicitationQueueSignal) {
+      elicitationQueueSignal();
+      elicitationQueueSignal = null;
+    }
+  });
+}
+
+/**
+ * Handles an elicitation request.
+ *
+ * This function is used to handle the elicitation request and return the result.
+ *
+ * @param request - The elicitation request to be handled
+ * @returns The elicitation result
+ */
 async function handleElicitationRequest(request: ElicitRequest): Promise<ElicitResult> {
+  const mode = request.params.mode;
   console.log('\n🔔 Elicitation Request Received:');
+  console.log(`Mode: ${mode}`);
+
+  if (mode === 'form') {
+    return await handleFormElicitationRequest(request);
+  } else if (mode === 'url') {
+    return {
+      action: await handleURLElicitation(request.params as ElicitRequestURLParams),
+    };
+  } else {
+    // This is impossible now, but illustrates defensive programming for future modes
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Unsupported elicitation mode: ${mode}`
+    )
+  }
+}
+
+/**
+ * Handles a URL elicitation by opening the URL in the browser.
+ *
+ * Note: This is a shared code for both request handlers and error handlers.
+ * As a result of sharing schema, there is no big forking of logic for the client.
+ *
+ * @param params - The URL elicitation request parameters
+ * @returns The action to take (accept, cancel, or decline)
+ */
+async function handleURLElicitation(params: ElicitRequestURLParams): Promise<ElicitResult['action']> {
+  const url = params.url;
+  const elicitationId = params.elicitationId;
+  const message = params.message;
+  console.log(`🆔 Elicitation ID: ${elicitationId}`); // Print for illustration
+
+  // Parse URL to show domain for security
+  let domain = 'unknown domain';
+  try {
+    const parsedUrl = new URL(url);
+    domain = parsedUrl.hostname;
+  } catch {
+    console.error('Invalid URL provided by server');
+    return 'decline';
+  }
+
+  // Example security warning to help prevent phishing attacks
+  console.log('\n⚠️  \x1b[33mSECURITY WARNING\x1b[0m ⚠️');
+  console.log('\x1b[33mThe server is requesting you to open an external URL.\x1b[0m');
+  console.log('\x1b[33mOnly proceed if you trust this server and understand why it needs this.\x1b[0m');
+  console.log(`🌐 Target domain: \x1b[36m${domain}\x1b[0m`);
+  console.log(`🔗 Full URL: \x1b[36m${url}\x1b[0m`);
+  console.log(`\nℹ️ Server's reason:\n\n\x1b[36m${message}\x1b[0m\n`);
+
+  // 1. Ask for user consent to open the URL
+  const consent = await new Promise<string>((resolve) => {
+    readline.question('\nDo you want to open this URL in your browser? (y/n): ', (input) => {
+      resolve(input.trim().toLowerCase());
+    });
+  });
+
+  // 2. If user did not consent, return appropriate result
+  if (consent === 'no' || consent === 'n') {
+    console.log('❌ URL navigation declined.');
+    return 'decline';
+  } else if (consent !== 'yes' && consent !== 'y') {
+    console.log('🚫 Invalid response. Cancelling elicitation.');
+    return 'cancel';
+  }
+
+  // 3. Start tracking elicitation progress in the background
+  const trackingPromise = (async () => {
+    console.log(`\n🔮 Started tracking progress for elicitation ${elicitationId}`);
+    for (let attempt = 3; attempt > 0; attempt--) {
+      try {
+        await client!.trackElicitation(elicitationId, (progress) => {
+          const step = progress.progress
+          const total = progress.total || 'N';
+          console.log(`\x1b[36m[🔮 Elicitation Progress for ${elicitationId}]\x1b[0m [${step}/${total}] ${progress.message}`);
+        });
+        console.log(`\x1b[32m✅ Elicitation ${elicitationId} completed successfully!\x1b[0m`);
+        return; // Success - exit the function
+      } catch (error) {
+        if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) {
+          console.log('Progress tracking timed out. Retrying...');
+          continue; // Try again
+        } else if (error instanceof McpError && error.code === ErrorCode.InvalidParams) {
+          console.log('Unable to track elicitation progress for this request');
+          return; // Server doesn't support tracking for this elicitation - exit gracefully
+        } else {
+          throw error; // Unexpected error - let outer handler deal with it
+        }
+      }
+    }
+    console.log(`\x1b[31m❌ Elicitation ${elicitationId} took too long to complete. No longer tracking progress.\x1b[0m`);
+  })();
+  trackingPromise.catch(error => {
+    console.error('Background tracking failed:', error);
+  });
+
+  // 4. Open the URL in the browser
+  console.log(`\n🚀 Opening browser to: ${url}`);
+  await openBrowser(url);
+
+  console.log('\n⏳ Waiting for you to complete the interaction in your browser...');
+  console.log('   The server will be notified once you complete the action.');
+
+  // 5. Acknowledge the user accepted the elicitation
+  return 'accept';
+}
+
+async function handleFormElicitationRequest(request: ElicitRequest): Promise<ElicitResult> {
+  // For form elicitations print the message straight away
   console.log(`Message: ${request.params.message}`);
-  console.log('Requested Schema:');
+  console.log('Requested Schema:'); // Print the schema for illustration
   console.log(JSON.stringify(request.params.requestedSchema, null, 2));
 
-  const schema = request.params.requestedSchema;
+  const params = request.params as ElicitRequestFormParams;
+  const schema = params.requestedSchema;
   const properties = schema.properties;
   const required = schema.required || [];
 
@@ -438,7 +689,10 @@ async function connect(url?: string): Promise<void> {
     version: '1.0.0'
   }, {
     capabilities: {
-      elicitation: {},
+      elicitation: {
+        form: {},
+        url: {}
+      },
     },
   });
   if (!transport) { // Only create a new transport if one doesn't exist
@@ -452,7 +706,7 @@ async function connect(url?: string): Promise<void> {
   }
 
   // Set up elicitation request handler with proper validation
-  client.setRequestHandler(ElicitRequestSchema, handleElicitationRequest);
+  client.setRequestHandler(ElicitRequestSchema, elicitationRequestHandler);
 
   try {
     console.log(`Connecting to ${serverUrl}...`);
@@ -620,6 +874,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<vo
       console.log(`\nFound ${resourceLinks.length} resource link(s). Use 'read-resource <uri>' to read their content.`);
     }
   } catch (error) {
+    if (error instanceof ElicitationRequiredError) {
+      console.log('\n🔔 Elicitation Required Error Received:');
+      console.log(`Message: ${error.message}`);
+      for (const e of error.elicitations) {
+        await handleURLElicitation(e); // For the error handler, we discard the action result because we don't respond to an error response
+      }
+      return;
+    }
     console.log(`Error calling tool ${name}: ${error}`);
   }
 }
@@ -654,6 +916,16 @@ async function cleanup(): Promise<void> {
   readline.close();
   console.log('\nGoodbye!');
   process.exit(0);
+}
+
+async function callPaymentConfirmTool(): Promise<void> {
+  console.log('Calling payment-confirm tool...');
+  await callTool('payment-confirm', {cartId: "cart_123"});
+}
+
+async function callThirdPartyAuthTool(): Promise<void> {
+  console.log('Calling third-party-auth tool...');
+  await callTool('third-party-auth', { param1: 'test' });
 }
 
 // Set up raw mode for keyboard input to capture Escape key

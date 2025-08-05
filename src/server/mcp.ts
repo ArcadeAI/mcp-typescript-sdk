@@ -173,6 +173,9 @@ export class McpServer {
           try {
             result = await Promise.resolve(cb(args, extra));
           } catch (error) {
+            if (error instanceof McpError) {
+              throw error; // Let the error bubble up to the caller
+            }
             result = {
               content: [
                 {
@@ -188,6 +191,9 @@ export class McpServer {
           try {
             result = await Promise.resolve(cb(extra));
           } catch (error) {
+            if (error instanceof McpError) {
+              throw error; // Let the error bubble up to the caller
+            }
             result = {
               content: [
                 {

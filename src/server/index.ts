@@ -2,6 +2,7 @@ import {
   mergeCapabilities,
   Protocol,
   ProtocolOptions,
+  RequestHandlerExtra,
   RequestOptions,
 } from "../shared/protocol.js";
 import {
@@ -32,8 +33,25 @@ import {
   ServerRequest,
   ServerResult,
   SUPPORTED_PROTOCOL_VERSIONS,
+  ElicitTrackRequestSchema,
+  ElicitTrackRequest,
+  ElicitTrackResult,
+  ProgressToken,
 } from "../types.js";
 import Ajv from "ajv";
+
+/**
+ * Handler for elicitation track requests.
+ * @param elicitationId - The ID of the elicitation to track
+ * @param progressToken - The progress token for tracking updates
+ * @param extra - Additional request context
+ * @returns The tracking result indicating the elicitation status
+ */
+export type ElicitTrackHandler = (
+  elicitationId: string,
+  progressToken: ProgressToken,
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+) => ElicitTrackResult | Promise<ElicitTrackResult>;
 
 export type ServerOptions = ProtocolOptions & {
   /**
@@ -45,6 +63,12 @@ export type ServerOptions = ProtocolOptions & {
    * Optional instructions describing how to use the server and its features.
    */
   instructions?: string;
+
+  /**
+   * Optional handler for elicitation track requests.
+   * If not provided, track requests will return an error indicating the server cannot track elicitations.
+   */
+  onElicitTrack?: ElicitTrackHandler;
 };
 
 /**
@@ -92,6 +116,11 @@ export class Server<
   oninitialized?: () => void;
 
   /**
+   * Optional handler for elicitation track requests.
+   */
+  onElicitTrack?: ElicitTrackHandler;
+
+  /**
    * Initializes this server with the given name and version information.
    */
   constructor(
@@ -101,12 +130,16 @@ export class Server<
     super(options);
     this._capabilities = options?.capabilities ?? {};
     this._instructions = options?.instructions;
+    this.onElicitTrack = options?.onElicitTrack;
 
     this.setRequestHandler(InitializeRequestSchema, (request) =>
       this._oninitialize(request),
     );
     this.setNotificationHandler(InitializedNotificationSchema, () =>
       this.oninitialized?.(),
+    );
+    this.setRequestHandler(ElicitTrackRequestSchema, (request, extra) =>
+      this._onElicitTrackRequest(request, extra),
     );
   }
 
@@ -252,6 +285,7 @@ export class Server<
 
       case "ping":
       case "initialize":
+      case "elicitation/track":
         // No specific capability required for these methods
         break;
     }
@@ -275,6 +309,39 @@ export class Server<
       serverInfo: this._serverInfo,
       ...(this._instructions && { instructions: this._instructions }),
     };
+  }
+
+  /**
+   * Handles an elicitation track request.
+   *
+   * @param request - The elicitation track request.
+   * @param extra - Additional request context.
+   * @returns The elicitation track result.
+   */
+  private async _onElicitTrackRequest(
+    request: ElicitTrackRequest,
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+  ): Promise<ElicitTrackResult> {
+    // Ensure the client supports URL elicitation if it wants to track elicitations
+    if (!this._clientCapabilities?.elicitation?.url) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        "Client does not support URL elicitation (required for tracking elicitations)"
+      );
+    }
+
+    const { elicitationId } = request.params;
+    const progressToken = request.params._meta!.progressToken;
+
+    if (this.onElicitTrack) {
+      return await Promise.resolve(this.onElicitTrack(elicitationId, progressToken, extra));
+    }
+
+    // Default behavior: server doesn't support tracking elicitations
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      "Server does not support tracking elicitation."
+    );
   }
 
   /**
@@ -314,14 +381,19 @@ export class Server<
     params: ElicitRequest["params"],
     options?: RequestOptions,
   ): Promise<ElicitResult> {
+    const mode = params.mode;
+    if (!this._clientCapabilities?.elicitation?.[mode]) {
+      throw new Error(`Client does not support ${mode} elicitation.`);
+    }
+
     const result = await this.request(
       { method: "elicitation/create", params },
       ElicitResultSchema,
       options,
     );
 
-    // Validate the response content against the requested schema if action is "accept"
-    if (result.action === "accept" && result.content) {
+    // If this is a form payload, validate the response content against the requested schema if action is "accept"
+    if (mode === "form" && result.action === "accept" && result.content) {
       try {
         const ajv = new Ajv();
         
