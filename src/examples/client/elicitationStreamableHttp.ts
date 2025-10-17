@@ -49,6 +49,43 @@ if (useOAuth) {
   );
 }
 
+// Parse repeated CLI headers: --header "Key: Value" (also supports -H)
+function parseHeadersFromArgv(argv: string[]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--header' || arg === '-H') {
+      const raw = argv[i + 1];
+      if (raw) {
+        const idx = raw.indexOf(':');
+        if (idx !== -1) {
+          const name = raw.slice(0, idx).trim();
+          const value = raw.slice(idx + 1).trim();
+          if (name) headers[name] = value;
+        }
+        i++;
+      }
+    }
+  }
+  return headers;
+}
+
+const cliHeaders: Record<string, string> = parseHeadersFromArgv(process.argv);
+
+// Parse CLI url: --url value or --url=value
+function parseUrlFromArgv(argv: string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--url') {
+      const value = argv[i + 1];
+      if (value) return value;
+    } else if (arg.startsWith('--url=')) {
+      return arg.slice('--url='.length);
+    }
+  }
+  return undefined;
+}
+
 // Create readline interface for user input
 const readline = createInterface({
   input: process.stdin,
@@ -78,6 +115,12 @@ let elicitationsCompleteSignal: (() => void) | null = null;
 async function main(): Promise<void> {
   console.log('MCP Interactive Client');
   console.log('=====================');
+
+  // Override server URL from CLI if provided
+  const cliUrl = parseUrlFromArgv(process.argv);
+  if (cliUrl) {
+    serverUrl = cliUrl;
+  }
 
   // Connect to server immediately with default settings
   await connect();
@@ -700,7 +743,14 @@ async function connect(url?: string): Promise<void> {
       new URL(serverUrl),
       {
         sessionId: sessionId,
-        authProvider: oauthProvider
+        authProvider: oauthProvider,
+        requestInit: {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            ...cliHeaders,
+          }
+        }
       }
     );
   }
@@ -727,7 +777,14 @@ async function connect(url?: string): Promise<void> {
         new URL(serverUrl),
         {
           sessionId: sessionId,
-          authProvider: oauthProvider
+          authProvider: oauthProvider,
+          requestInit: {
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json, text/event-stream',
+              ...cliHeaders,
+            }
+          }
         }
       );
       await client.connect(transport);
@@ -920,7 +977,7 @@ async function cleanup(): Promise<void> {
 
 async function callPaymentConfirmTool(): Promise<void> {
   console.log('Calling payment-confirm tool...');
-  await callTool('payment-confirm', {cartId: "cart_123"});
+  await callTool('payment-confirm', { cartId: "cart_123" });
 }
 
 async function callThirdPartyAuthTool(): Promise<void> {
