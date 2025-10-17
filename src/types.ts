@@ -130,7 +130,7 @@ export enum ErrorCode {
   MethodNotFound = -32601,
   InvalidParams = -32602,
   InternalError = -32603,
-  ElicitationRequired = -32604,
+  ElicitationRequired = -32000,
 }
 
 /**
@@ -475,17 +475,17 @@ export const TextResourceContentsSchema = ResourceContentsSchema.extend({
  * stack overflows by using the native `atob` function for validation.
  */
 const Base64Schema = z.string().refine(
-    (val) => {
-        try {
-            // atob throws a DOMException if the string contains characters
-            // that are not part of the Base64 character set.
-            atob(val);
-            return true;
-        } catch {
-            return false;
-        }
-    },
-    { message: "Invalid Base64 string" },
+  (val) => {
+    try {
+      // atob throws a DOMException if the string contains characters
+      // that are not part of the Base64 character set.
+      atob(val);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: "Invalid Base64 string" },
 );
 
 export const BlobResourceContentsSchema = ResourceContentsSchema.extend({
