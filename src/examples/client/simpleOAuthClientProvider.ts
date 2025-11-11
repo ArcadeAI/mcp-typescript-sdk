@@ -1,12 +1,12 @@
-import { OAuthClientProvider } from 'src/client/auth.js';
-import { OAuthClientInformation, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from 'src/shared/auth.js';
+import { OAuthClientProvider } from "../../client/auth.js";
+import { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "../../shared/auth.js";
 
 /**
  * In-memory OAuth client provider for demonstration purposes
  * In production, you should persist tokens securely
  */
 export class InMemoryOAuthClientProvider implements OAuthClientProvider {
-    private _clientInformation?: OAuthClientInformationFull;
+    private _clientInformation?: OAuthClientInformationMixed;
     private _tokens?: OAuthTokens;
     private _codeVerifier?: string;
 
@@ -32,11 +32,11 @@ export class InMemoryOAuthClientProvider implements OAuthClientProvider {
         return this._clientMetadata;
     }
 
-    clientInformation(): OAuthClientInformation | undefined {
+    clientInformation(): OAuthClientInformationMixed | undefined {
         return this._clientInformation;
     }
 
-    saveClientInformation(clientInformation: OAuthClientInformationFull): void {
+    saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
         this._clientInformation = clientInformation;
     }
 
