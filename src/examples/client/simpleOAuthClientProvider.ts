@@ -1,5 +1,5 @@
-import { OAuthClientProvider } from "../../client/auth.js";
-import { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "../../shared/auth.js";
+import { OAuthClientProvider } from '../../client/auth.js';
+import { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '../../shared/auth.js';
 
 /**
  * In-memory OAuth client provider for demonstration purposes

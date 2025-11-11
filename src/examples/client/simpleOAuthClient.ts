@@ -16,7 +16,6 @@ const DEFAULT_SERVER_URL = 'http://localhost:3000/mcp';
 const CALLBACK_PORT = 8090; // Use different port than auth server (3001)
 const CALLBACK_URL = `http://localhost:${CALLBACK_PORT}/callback`;
 
-
 /**
  * Interactive MCP client with OAuth authentication
  * Demonstrates the complete OAuth flow with browser-based authorization
@@ -28,7 +27,7 @@ class InteractiveOAuthClient {
         output: process.stdout
     });
 
-    constructor(private serverUrl: string) { }
+    constructor(private serverUrl: string) {}
 
     /**
      * Prompts user for input via readline
