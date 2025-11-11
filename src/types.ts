@@ -1406,7 +1406,7 @@ export const ElicitRequestURLParamsSchema = ElicitRequestParamsSchema.extend({
 /**
  * A request from the server to elicit user input via the client.
  * The client should present the message and form fields to the user (form mode)
- * or navigate to a URL (url mode).
+ * or navigate to a URL (URL mode).
  */
 export const ElicitRequestSchema = RequestSchema.extend({
     method: z.literal('elicitation/create'),
@@ -1693,14 +1693,14 @@ type Primitive = string | number | boolean | bigint | null | undefined;
 type Flatten<T> = T extends Primitive
     ? T
     : T extends Array<infer U>
-      ? Array<Flatten<U>>
-      : T extends Set<infer U>
-        ? Set<Flatten<U>>
-        : T extends Map<infer K, infer V>
-          ? Map<Flatten<K>, Flatten<V>>
-          : T extends object
-            ? { [K in keyof T]: Flatten<T[K]> }
-            : T;
+    ? Array<Flatten<U>>
+    : T extends Set<infer U>
+    ? Set<Flatten<U>>
+    : T extends Map<infer K, infer V>
+    ? Map<Flatten<K>, Flatten<V>>
+    : T extends object
+    ? { [K in keyof T]: Flatten<T[K]> }
+    : T;
 
 type Infer<Schema extends ZodTypeAny> = Flatten<z.infer<Schema>>;
 
