@@ -138,7 +138,9 @@ export enum ErrorCode {
     MethodNotFound = -32601,
     InvalidParams = -32602,
     InternalError = -32603,
-    ElicitationRequired = -32000,
+
+    // MCP-specific error codes
+    UrlElicitationRequired = -32042,
 }
 
 /**
@@ -1410,38 +1412,25 @@ export const ElicitRequestSchema = RequestSchema.extend({
 });
 
 /**
- * Parameters for tracking elicitation progress.
+ * Parameters for a `notifications/elicitation/complete` notification.
+ *
+ * @category notifications/elicitation/complete
  */
-export const ElicitTrackParamsSchema = BaseRequestParamsSchema.extend({
-    _meta: RequestMetaSchema.extend({
-        /**
-         * The progress token as specified in the Progress capability, required in this request.
-         */
-        progressToken: ProgressTokenSchema,
-    }),
+export const ElicitationCompleteNotificationParamsSchema = NotificationsParamsSchema.extend({
     /**
-     * The ID of the elicitation to track.
+     * The ID of the elicitation that completed.
      */
     elicitationId: z.string(),
 });
 
 /**
- * A request from the client to track the progress of an elicitation.
+ * A notification from the server to the client, informing it of a completion of an out-of-band elicitation request.
+ *
+ * @category notifications/elicitation/complete
  */
-export const ElicitTrackRequestSchema = RequestSchema.extend({
-    method: z.literal("elicitation/track"),
-    params: ElicitTrackParamsSchema,
-});
-
-/**
- * The server's response to an elicitation/track request from the client.
- */
-export const ElicitTrackResultSchema = ResultSchema.extend({
-    /**
-     * The status of the elicitation.
-     * - "complete": The elicitation has been completed
-     */
-    status: z.literal("complete"),
+export const ElicitationCompleteNotificationSchema = NotificationSchema.extend({
+    method: z.literal("notifications/elicitation/complete"),
+    params: ElicitationCompleteNotificationParamsSchema,
 });
 
 /**
@@ -1617,7 +1606,6 @@ export const ClientRequestSchema = z.union([
     UnsubscribeRequestSchema,
     CallToolRequestSchema,
     ListToolsRequestSchema,
-    ElicitTrackRequestSchema,
 ]);
 
 export const ClientNotificationSchema = z.union([
@@ -1639,7 +1627,8 @@ export const ServerNotificationSchema = z.union([
     ResourceUpdatedNotificationSchema,
     ResourceListChangedNotificationSchema,
     ToolListChangedNotificationSchema,
-    PromptListChangedNotificationSchema
+    PromptListChangedNotificationSchema,
+    ElicitationCompleteNotificationSchema
 ]);
 
 export const ServerResultSchema = z.union([
@@ -1653,7 +1642,6 @@ export const ServerResultSchema = z.union([
     ReadResourceResultSchema,
     CallToolResultSchema,
     ListToolsResultSchema,
-    ElicitTrackResultSchema,
 ]);
 
 export class McpError extends Error {
@@ -1671,7 +1659,7 @@ export class McpError extends Error {
      */
     static fromError(code: number, message: string, data?: unknown): McpError {
         // Check for specific error types
-        if (code === ErrorCode.ElicitationRequired && data) {
+        if (code === ErrorCode.UrlElicitationRequired && data) {
             const errorData = data as { elicitations?: unknown[] };
             if (errorData.elicitations) {
                 return new ElicitationRequiredError(
@@ -1695,7 +1683,7 @@ export class ElicitationRequiredError extends McpError {
         elicitations: ElicitRequestURLParams[],
         message: string = `Elicitation${elicitations.length > 1 ? 's' : ''} required`,
     ) {
-        super(ErrorCode.ElicitationRequired, message, {
+        super(ErrorCode.UrlElicitationRequired, message, {
             elicitations: elicitations
         });
     }
@@ -1884,9 +1872,8 @@ export type PrimitiveSchemaDefinition = Infer<typeof PrimitiveSchemaDefinitionSc
 export type ElicitRequestFormParams = Infer<typeof ElicitRequestFormParamsSchema>;
 export type ElicitRequestURLParams = Infer<typeof ElicitRequestURLParamsSchema>;
 export type ElicitRequest = Infer<typeof ElicitRequestSchema>;
-export type ElicitTrackParams = Infer<typeof ElicitTrackParamsSchema>;
-export type ElicitTrackRequest = Infer<typeof ElicitTrackRequestSchema>;
-export type ElicitTrackResult = Infer<typeof ElicitTrackResultSchema>;
+export type ElicitationCompleteNotificationParams = Infer<typeof ElicitationCompleteNotificationParamsSchema>;
+export type ElicitationCompleteNotification = Infer<typeof ElicitationCompleteNotificationSchema>;
 export type ElicitResult = Infer<typeof ElicitResultSchema>;
 
 /* Autocomplete */

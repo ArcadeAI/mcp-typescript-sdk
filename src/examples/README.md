@@ -108,22 +108,20 @@ npx tsx src/examples/server/standaloneSseWithGetStreamableHttp.ts
 
 ##### Elicitation Example
 
-A comprehensive example demonstrating both modes of elicitation with OAuth authentication. This example shows:
+A comprehensive example demonstrating URL mode elicitation with a server protected by MCP authorization. This example shows:
 
-- OAuth protected MCP server
 - SSE-driven URL-mode elicitation of an API Key on session initialization
-- Form elicitation tools
-- Tools that require direct user interaction via url-mode elicitation (for payment confirmation and for third-party OAuth tokens)
-- Progress tracking of URL-mode elicitations
+- Tools that require direct user interaction via URL-mode elicitation (for payment confirmation and for third-party OAuth tokens)
+- Completion notifications for URL-mode elicitations
 
 To run this example:
 
 ```bash
 # Start the server with OAuth enabled
-npx tsx src/examples/server/elicitationStreamableHttp.ts --oauth
+npx tsx src/examples/server/elicitationStreamableHttp.ts
 
 # In a separate terminal, start the client with OAuth
-npx tsx src/examples/client/elicitationStreamableHttp.ts --oauth
+npx tsx src/examples/client/elicitationStreamableHttp.ts
 ```
 
 #### Deprecated SSE Transport

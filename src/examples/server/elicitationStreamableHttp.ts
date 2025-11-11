@@ -14,20 +14,14 @@ import {
   isInitializeRequest,
   McpError,
   PrimitiveSchemaDefinition,
-  ProgressNotification,
-  ProgressToken,
+  ElicitationCompleteNotification,
 } from '../../types.js';
 import { InMemoryEventStore } from '../shared/inMemoryEventStore.js';
 import { setupAuthServer } from './demoInMemoryOAuthProvider.js';
-import { OAuthMetadata } from 'src/shared/auth.js';
-import { checkResourceAllowed } from 'src/shared/auth-utils.js';
+import { OAuthMetadata } from '../../shared/auth.js';
+import { checkResourceAllowed } from '../../shared/auth-utils.js';
 
 import cors from 'cors';
-import { ElicitTrackHandler } from '../../server/index.js';
-
-// Check for OAuth flag
-const useOAuth = process.argv.includes('--oauth');
-const strictOAuth = process.argv.includes('--oauth-strict');
 
 // Create an MCP server with implementation details
 const getServer = () => {
@@ -36,7 +30,6 @@ const getServer = () => {
     version: '1.0.0',
   }, {
     capabilities: { logging: {} },
-    onElicitTrack: trackElicitation,
   });
 
   server.tool(
@@ -45,25 +38,30 @@ const getServer = () => {
     {
       cartId: z.string().describe('The ID of the cart to confirm'),
     },
-    async (_args, _extra): Promise<CallToolResult> => {
+    async ({ cartId }, extra): Promise<CallToolResult> => {
       /*
         In a real world scenario, there would be some logic here to check if the user has the provided cartId.
-        Auth info (with a subject or `sub` claim) can be typically be found in `extra.authInfo`.
-        If we do, we can just return the result of the tool call.
-        If we don't, we can throw an ElicitationRequiredError to request the user to upgrade.
-        For the purposes of this example, we'll just throw an error.
-
-        In this example, we show when the server is unable to provide tracking of the elicitation.
-        On the server side, we simply do not track the elicitationId. The client will receive an InvalidParams error.
+        For the purposes of this example, we'll throw an error (-> elicits the client to open a URL to confirm payment)
       */
+      const sessionId = extra.sessionId;
+      if (!sessionId) {
+        throw new Error('Expected a Session ID');
+      }
 
+      // Create and track the elicitation
+      const elicitationId = generateTrackedElicitation(
+        sessionId,
+        async (notification: ElicitationCompleteNotification) => {
+          await server.server.notification(notification);
+        }
+      );
       throw new ElicitationRequiredError(
         [
           {
             mode: 'url',
             message: 'This tool requires a payment confirmation. Open the link to confirm payment!',
-            url: 'https://www.example.com/confirm-payment',
-            elicitationId: generateElicitationId(),
+            url: `http://localhost:${MCP_PORT}/confirm-payment?session=${sessionId}&elicitation=${elicitationId}&cartId=${encodeURIComponent(cartId)}`,
+            elicitationId,
           }
         ]
       )
@@ -72,7 +70,7 @@ const getServer = () => {
 
   server.tool(
     'third-party-auth',
-    'A tool that requires third-party OAuth credentials',  // description
+    'A demo tool that requires third-party OAuth credentials',  // description
     {
       param1: z.string().describe('First parameter'),
     },
@@ -82,37 +80,27 @@ const getServer = () => {
         Auth info (with a subject or `sub` claim) can be typically be found in `extra.authInfo`.
         If we do, we can just return the result of the tool call.
         If we don't, we can throw an ElicitationRequiredError to request the user to authenticate.
-        For the purposes of this example, we'll just throw an error.
-
-        In this example, we show when the server is able to provide tracking of the elicitation.
-        On the server side, we track the elicitationId and return a pending status to the client.
-        In a real world scenario, we would update the progress when we recieve a callback from the OAuth provider.
-        We would update the progress a final time when we receive a token, indicating to the client that it's safe to retry.
+        For the purposes of this example, we'll throw an error (-> elicits the client to open a URL to authenticate).
       */
       const sessionId = extra.sessionId;
       if (!sessionId) {
-        throw new Error('Expected a Session ID to track elicitation');
+        throw new Error('Expected a Session ID');
       }
 
       // Create and track the elicitation
       const elicitationId = generateTrackedElicitation(
         sessionId,
-        'Third-party authentication required'
+        async (notification: ElicitationCompleteNotification) => {
+          await server.server.notification(notification);
+        }
       );
 
-      // Simulate OAuth callback after 10 seconds
-      // In a real app, this would be called from your OAuth callback handler
-      setTimeout(() => {
-        console.log(`Simulating OAuth callback for elicitation ${elicitationId}`);
-        updateElicitationProgress(elicitationId, 'Received OAuth callback');
-      }, 10000);
-
-      // Simulate OAuth token received after 15 seconds
+      // Simulate OAuth callback and token exchange after 5 seconds
       // In a real app, this would be called from your OAuth callback handler
       setTimeout(() => {
         console.log(`Simulating OAuth token received for elicitation ${elicitationId}`);
-        completeElicitation(elicitationId, 'Received OAuth token(s)');
-      }, 15000);
+        completeURLElicitation(elicitationId);
+      }, 5000);
 
       throw new ElicitationRequiredError(
         [
@@ -127,177 +115,20 @@ const getServer = () => {
     }
   );
 
-  // Register a tool that demonstrates elicitation (user input collection)
-  // This creates a closure that captures the server instance
-  server.tool(
-    'collect-user-info',
-    'A tool that collects user information through elicitation',
-    {
-      infoType: z.enum(['contact', 'preferences', 'feedback']).describe('Type of information to collect'),
-    },
-    async ({ infoType }): Promise<CallToolResult> => {
-      let message: string;
-      let requestedSchema: {
-        type: 'object';
-        properties: Record<string, PrimitiveSchemaDefinition>;
-        required?: string[];
-      };
-
-      switch (infoType) {
-        case 'contact':
-          message = 'Please provide your contact information';
-          requestedSchema = {
-            type: 'object',
-            properties: {
-              name: {
-                type: 'string',
-                title: 'Full Name',
-                description: 'Your full name',
-              },
-              email: {
-                type: 'string',
-                title: 'Email Address',
-                description: 'Your email address',
-                format: 'email',
-              },
-              phone: {
-                type: 'string',
-                title: 'Phone Number',
-                description: 'Your phone number (optional)',
-              },
-            },
-            required: ['name', 'email'],
-          };
-          break;
-        case 'preferences':
-          message = 'Please set your preferences';
-          requestedSchema = {
-            type: 'object',
-            properties: {
-              theme: {
-                type: 'string',
-                title: 'Theme',
-                description: 'Choose your preferred theme',
-                enum: ['light', 'dark', 'auto'],
-                enumNames: ['Light', 'Dark', 'Auto'],
-              },
-              notifications: {
-                type: 'boolean',
-                title: 'Enable Notifications',
-                description: 'Would you like to receive notifications?',
-                default: true,
-              },
-              frequency: {
-                type: 'string',
-                title: 'Notification Frequency',
-                description: 'How often would you like notifications?',
-                enum: ['daily', 'weekly', 'monthly'],
-                enumNames: ['Daily', 'Weekly', 'Monthly'],
-              },
-            },
-            required: ['theme'],
-          };
-          break;
-        case 'feedback':
-          message = 'Please provide your feedback';
-          requestedSchema = {
-            type: 'object',
-            properties: {
-              rating: {
-                type: 'integer',
-                title: 'Rating',
-                description: 'Rate your experience (1-5)',
-                minimum: 1,
-                maximum: 5,
-              },
-              comments: {
-                type: 'string',
-                title: 'Comments',
-                description: 'Additional comments (optional)',
-                maxLength: 500,
-              },
-              recommend: {
-                type: 'boolean',
-                title: 'Would you recommend this?',
-                description: 'Would you recommend this to others?',
-              },
-            },
-            required: ['rating', 'recommend'],
-          };
-          break;
-        default:
-          throw new Error(`Unknown info type: ${infoType}`);
-      }
-
-      try {
-        // Use the underlying server instance to elicit input from the client
-        const result = await server.server.elicitInput({
-          mode: 'form',
-          message,
-          requestedSchema,
-        });
-
-        switch (result.action) {
-          case 'accept':
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Thank you! Collected ${infoType} information: ${JSON.stringify(result.content, null, 2)}`,
-                },
-              ],
-            };
-          case 'decline':
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `No information was collected. User declined ${infoType} information request.`,
-                },
-              ],
-            };
-          case 'cancel':
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Information collection was cancelled by the user.`,
-                },
-              ],
-            };
-          default:
-            throw new Error(`Unknown action: ${result.action}`);
-        }
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error collecting ${infoType} information: ${error}`,
-            },
-          ],
-        };
-      }
-    }
-  );
-
   return server;
 };
 
 /**
- * Elicitation Progress Tracking Utilities
+ * Elicitation Completion Tracking Utilities
  **/
 
 interface ElicitationMetadata {
   status: 'pending' | 'complete';
-  progress: number;
   completedPromise: Promise<void>;
   completeResolver: () => void;
   createdAt: Date;
   sessionId: string;
-  notificationSender?: (notification: ProgressNotification) => void;
-  message: string;
-  progressToken?: ProgressToken;
+  notificationSender?: (notification: ElicitationCompleteNotification) => Promise<void>;
 }
 
 const elicitationsMap = new Map<string, ElicitationMetadata>();
@@ -322,135 +153,42 @@ setInterval(cleanupOldElicitations, CLEANUP_INTERVAL_MS);
  * Elicitation IDs must be unique strings within the MCP session
  * UUIDs are used in this example for simplicity
  */
-function generateElicitationId() : string {
+function generateElicitationId(): string {
   return randomUUID();
 }
 
 /**
 * Helper function to create and track a new elicitation.
 */
-function generateTrackedElicitation(sessionId: string, message?: string): string {
- const elicitationId = generateElicitationId();
+function generateTrackedElicitation(
+  sessionId: string,
+  notificationSender?: (notification: ElicitationCompleteNotification) => Promise<void>
+): string {
+  const elicitationId = generateElicitationId();
 
- // Create a Promise and its resolver for tracking completion
- let completeResolver: () => void;
- const completedPromise = new Promise<void>((resolve) => {
-   completeResolver = resolve;
- });
-
- // Store the elicitation in our map
- elicitationsMap.set(elicitationId, {
-   status: 'pending',
-   progress: 0,
-   completedPromise,
-   completeResolver: completeResolver!,
-   createdAt: new Date(),
-   sessionId,
-   message: message || 'In progress',
- });
-
- return elicitationId;
-}
-
-/**
- * Handler for the elicitation/track request
- */
-const trackElicitation: ElicitTrackHandler = async (elicitationId, progressToken, extra) => {
-  console.log(`📒 Track elicitation request: ${elicitationId} ${progressToken} (session: ${extra.sessionId})`);
-
-  // Check that the elicitation ID is valid and that the session ID matches
-  const elicitationMetadata = elicitationsMap.get(elicitationId);
-  if (!elicitationMetadata || elicitationMetadata.sessionId !== extra.sessionId) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      `Invalid elicitation ID: ${elicitationId}`
-    );
-  }
-
-  if (elicitationMetadata.status === 'complete') {
-    // The elicitation is already complete, so we can return complete
-    return {
-      status: 'complete',
-    };
-  }
-
-  // Keep track of the progress token so we can continue to update the client with progress updates
-  elicitationMetadata.progressToken = progressToken;
-  elicitationMetadata.notificationSender = extra.sendNotification;
-
-  // Send an initial notification to the client with the progress token
-  elicitationMetadata.notificationSender({
-    method: 'notifications/progress',
-    params: {
-      progressToken,
-      progress: elicitationMetadata.progress,
-      message: elicitationMetadata.message,
-    },
+  // Create a Promise and its resolver for tracking completion
+  let completeResolver: () => void;
+  const completedPromise = new Promise<void>((resolve) => {
+    completeResolver = resolve;
   });
 
-  // Wait for completion with a timeout
-  const TRACK_TIMEOUT_MS = 30 * 1000; // 30 seconds timeout
+  // Store the elicitation in our map
+  elicitationsMap.set(elicitationId, {
+    status: 'pending',
+    completedPromise,
+    completeResolver: completeResolver!,
+    createdAt: new Date(),
+    sessionId,
+    notificationSender,
+  });
 
-  try {
-    await Promise.race([
-      elicitationMetadata.completedPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Elicitation tracking timeout')), TRACK_TIMEOUT_MS)
-      )
-    ]);
-
-    return {
-      status: 'complete',
-    };
-  } catch {
-    // Timeout occurred
-    // Cleanup progress tracking for this request
-    elicitationMetadata.progressToken = undefined;
-    elicitationMetadata.notificationSender = undefined;
-    throw new McpError(
-      ErrorCode.RequestTimeout,
-      'Elicitation tracking timed out'
-    );
-  }
-};
-
-/**
- * Helper function to update the progress of an elicitation.
- */
-function updateElicitationProgress(elicitationId: string, message?: string) {
-  const elicitation = elicitationsMap.get(elicitationId);
-  if (!elicitation) {
-    console.warn(`Attempted to update unknown elicitation: ${elicitationId}`);
-    return;
-  }
-
-  if (elicitation.status === 'complete') {
-    console.warn(`Elicitation already complete: ${elicitationId}`);
-    return;
-  }
-
-  if (message) {
-    elicitation.message = message;
-  }
-
-  elicitation.progress++;
-
-  if (elicitation.progressToken && elicitation.notificationSender) {
-    elicitation.notificationSender({
-      method: 'notifications/progress',
-      params: {
-        progressToken: elicitation.progressToken,
-        progress: elicitation.progress,
-        message: elicitation.message,
-      },
-    });
-  }
+  return elicitationId;
 }
 
 /**
  * Helper function to complete an elicitation.
  */
-function completeElicitation(elicitationId: string, message?: string) {
+function completeURLElicitation(elicitationId: string) {
   const elicitation = elicitationsMap.get(elicitationId);
   if (!elicitation) {
     console.warn(`Attempted to complete unknown elicitation: ${elicitationId}`);
@@ -464,23 +202,22 @@ function completeElicitation(elicitationId: string, message?: string) {
 
   // Update metadata
   elicitation.status = 'complete';
-  elicitation.message = message || 'Complete';
-  elicitation.progress++;
 
-  // Send a final notification to the client with the progress token
-  if (elicitation.progressToken && elicitation.notificationSender) {
+  // Send completion notification to the client
+  if (elicitation.notificationSender) {
+    console.log(`Sending notifications/elicitation/complete notification for elicitation ${elicitationId}`);
+
     elicitation.notificationSender({
-      method: 'notifications/progress',
+      method: 'notifications/elicitation/complete',
       params: {
-        progressToken: elicitation.progressToken,
-        progress: elicitation.progress,
-        total: elicitation.progress,
-        message: elicitation.message,
+        elicitationId,
       },
+    }).catch(error => {
+      console.error(`Failed to send completion notification for elicitation ${elicitationId}:`, error);
     });
   }
 
-  // Resolve the promise to unblock the request handler
+  // Resolve the promise to unblock any waiting code
   elicitation.completeResolver();
 }
 
@@ -497,72 +234,69 @@ app.use(cors({
   credentials: true // Allow cookies to be sent cross-origin
 }));
 
-// Set up OAuth if enabled
+// Set up OAuth (required for this example)
 let authMiddleware = null;
-if (useOAuth) {
-  // Create auth middleware for MCP endpoints
-  const mcpServerUrl = new URL(`http://localhost:${MCP_PORT}/mcp`);
-  const authServerUrl = new URL(`http://localhost:${AUTH_PORT}`);
+// Create auth middleware for MCP endpoints
+const mcpServerUrl = new URL(`http://localhost:${MCP_PORT}/mcp`);
+const authServerUrl = new URL(`http://localhost:${AUTH_PORT}`);
 
-  const oauthMetadata: OAuthMetadata = setupAuthServer({ authServerUrl, mcpServerUrl, strictResource: strictOAuth });
+const oauthMetadata: OAuthMetadata = setupAuthServer({ authServerUrl, mcpServerUrl, strictResource: true });
 
-  const tokenVerifier = {
-    verifyAccessToken: async (token: string) => {
-      const endpoint = oauthMetadata.introspection_endpoint;
+const tokenVerifier = {
+  verifyAccessToken: async (token: string) => {
+    const endpoint = oauthMetadata.introspection_endpoint;
 
-      if (!endpoint) {
-        throw new Error('No token verification endpoint available in metadata');
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          token: token
-        }).toString()
-      });
-
-
-      if (!response.ok) {
-        throw new Error(`Invalid or expired token: ${await response.text()}`);
-      }
-
-      const data = await response.json();
-
-      if (strictOAuth) {
-        if (!data.aud) {
-          throw new Error(`Resource Indicator (RFC8707) missing`);
-        }
-        if (!checkResourceAllowed({ requestedResource: data.aud, configuredResource: mcpServerUrl })) {
-          throw new Error(`Expected resource indicator ${mcpServerUrl}, got: ${data.aud}`);
-        }
-      }
-
-      // Convert the response to AuthInfo format
-      return {
-        token,
-        clientId: data.client_id,
-        scopes: data.scope ? data.scope.split(' ') : [],
-        expiresAt: data.exp,
-      };
+    if (!endpoint) {
+      throw new Error('No token verification endpoint available in metadata');
     }
-  }
-  // Add metadata routes to the main MCP server
-  app.use(mcpAuthMetadataRouter({
-    oauthMetadata,
-    resourceServerUrl: mcpServerUrl,
-    scopesSupported: ['mcp:tools'],
-    resourceName: 'MCP Demo Server',
-  }));
 
-  authMiddleware = requireBearerAuth({
-    verifier: tokenVerifier,
-    requiredScopes: [],
-    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpServerUrl),
-  });
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        token: token
+      }).toString()
+    });
+
+
+    if (!response.ok) {
+      throw new Error(`Invalid or expired token: ${await response.text()}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.aud) {
+      throw new Error(`Resource Indicator (RFC8707) missing`);
+    }
+    if (!checkResourceAllowed({ requestedResource: data.aud, configuredResource: mcpServerUrl })) {
+      throw new Error(`Expected resource indicator ${mcpServerUrl}, got: ${data.aud}`);
+    }
+
+    // Convert the response to AuthInfo format
+    return {
+      token,
+      clientId: data.client_id,
+      scopes: data.scope ? data.scope.split(' ') : [],
+      expiresAt: data.exp,
+    };
+  }
 }
+// Add metadata routes to the main MCP server
+app.use(mcpAuthMetadataRouter({
+  oauthMetadata,
+  resourceServerUrl: mcpServerUrl,
+  scopesSupported: ['mcp:tools'],
+  resourceName: 'MCP Demo Server',
+}));
+
+authMiddleware = requireBearerAuth({
+  verifier: tokenVerifier,
+  requiredScopes: [],
+  resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpServerUrl),
+});
+
 
 /**
  * API Key Form Handling
@@ -571,17 +305,20 @@ if (useOAuth) {
  * URL-mode elicitation enables the server to host a simple form and get the secret data securely from the user without involving the LLM or client.
  **/
 
-// Interface for a function that can send an elicitation request
-type ElicitationSender = (params: ElicitRequestURLParams) => Promise<ElicitResult>;
 
-async function sendApiKeyElicitation(sessionId: string, sender: ElicitationSender) {
+
+async function sendApiKeyElicitation(
+  sessionId: string,
+  sender: ElicitationSender,
+  notificationSender: ElicitationNotificationSender
+) {
   if (!sessionId) {
     console.error('No session ID provided');
     throw new Error('Expected a Session ID to track elicitation');
   }
 
-  console.log('🔑 Requesting API key from client...');
-  const elicitationId = generateTrackedElicitation(sessionId);
+  console.log('🔑 URL elicitation demo: Requesting API key from client...');
+  const elicitationId = generateTrackedElicitation(sessionId, notificationSender);
   try {
     const result = await sender({
       mode: 'url',
@@ -593,12 +330,12 @@ async function sendApiKeyElicitation(sessionId: string, sender: ElicitationSende
 
     switch (result.action) {
       case 'accept':
-        console.log('API key elicitation accepted by client');
+        console.log('🔑 URL elicitation demo: Client accepted the API key elicitation (now pending form submission)');
         // Wait for the API key to be submitted via the form
         // The form submission will complete the elicitation
         break;
       default:
-        console.log('API key not provided by client');
+        console.log('🔑 URL elicitation demo: Client declined to provide an API key');
         // In a real app, this might close the connection, but for the demo, we'll continue
         break;
     }
@@ -626,8 +363,6 @@ app.get('/api-key-form', (req: Request, res: Response) => {
     return;
   }
 
-  updateElicitationProgress(elicitationId, 'Waiting for you to submit your API key...');
-
   // Serve a simple HTML form
   res.send(`
     <!DOCTYPE html>
@@ -654,7 +389,7 @@ app.get('/api-key-form', (req: Request, res: Response) => {
         </label>
         <button type="submit">Submit</button>
       </form>
-      <div class="info">This is a demo showing how a server can elicit sensitive data from a user.</div>
+      <div class="info">This is a demo showing how a server can securely elicit sensitive data from a user using a URL.</div>
     </body>
     </html>
   `);
@@ -679,7 +414,7 @@ app.post('/api-key-form', express.urlencoded(), (req: Request, res: Response) =>
   console.log(`🔑 Received API key \x1b[32m${apiKey}\x1b[0m for session ${sessionId}`);
 
   // If we have an elicitationId, complete the elicitation
-  completeElicitation(elicitationId, 'API key received');
+  completeURLElicitation(elicitationId);
 
   // Send a success response
   res.send(`
@@ -722,24 +457,164 @@ function getUserSessionCookie(cookieHeader?: string): { userId: string; name: st
   return null;
 }
 
+/**
+ * Payment Confirmation Form Handling
+ *
+ * This demonstrates how a server can use URL-mode elicitation to get user confirmation
+ * for sensitive operations like payment processing.
+ **/
+
+// Payment Confirmation Form endpoint - serves a simple HTML form
+app.get('/confirm-payment', (req: Request, res: Response) => {
+  const mcpSessionId = req.query.session as string | undefined;
+  const elicitationId = req.query.elicitation as string | undefined;
+  const cartId = req.query.cartId as string | undefined;
+  if (!mcpSessionId || !elicitationId) {
+    res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
+    return;
+  }
+
+  // Check for user session cookie
+  // In production, this is often handled by some user auth middleware to ensure the user has a valid session
+  // This session is different from the MCP session.
+  // This userSession is the cookie that the MCP Server's Authorization Server sets for the user when they log in.
+  const userSession = getUserSessionCookie(req.headers.cookie);
+  if (!userSession) {
+    res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
+    return;
+  }
+
+  // Serve a simple HTML form
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Confirm Payment</title>
+      <style>
+        body { font-family: sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; }
+        button { background: #28a745; color: white; padding: 12px 24px; border: none; cursor: pointer; font-size: 16px; width: 100%; margin: 10px 0; }
+        button:hover { background: #218838; }
+        button.cancel { background: #6c757d; }
+        button.cancel:hover { background: #5a6268; }
+        .user { background: #d1ecf1; padding: 8px; margin-bottom: 10px; }
+        .cart-info { background: #f8f9fa; padding: 12px; margin: 15px 0; border-left: 4px solid #007bff; }
+        .info { color: #666; font-size: 0.9em; margin-top: 20px; }
+        .warning { background: #fff3cd; color: #856404; padding: 12px; margin: 15px 0; border-left: 4px solid #ffc107; }
+      </style>
+    </head>
+    <body>
+      <h1>Confirm Payment</h1>
+      <div class="user">✓ Logged in as: <strong>${userSession.name}</strong></div>
+      ${cartId ? `<div class="cart-info"><strong>Cart ID:</strong> ${cartId}</div>` : ''}
+      <div class="warning">
+        <strong>⚠️ Please review your order before confirming.</strong>
+      </div>
+      <form method="POST" action="/confirm-payment">
+        <input type="hidden" name="session" value="${mcpSessionId}" />
+        <input type="hidden" name="elicitation" value="${elicitationId}" />
+        ${cartId ? `<input type="hidden" name="cartId" value="${cartId}" />` : ''}
+        <button type="submit" name="action" value="confirm">Confirm Payment</button>
+        <button type="submit" name="action" value="cancel" class="cancel">Cancel</button>
+      </form>
+      <div class="info">This is a demo showing how a server can securely get user confirmation for sensitive operations using URL-mode elicitation.</div>
+    </body>
+    </html>
+  `);
+});
+
+// Handle Payment Confirmation form submission
+app.post('/confirm-payment', express.urlencoded(), (req: Request, res: Response) => {
+  const { session: sessionId, elicitation: elicitationId, cartId, action } = req.body;
+  if (!sessionId || !elicitationId) {
+    res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
+    return;
+  }
+
+  // Check for user session cookie here too
+  const userSession = getUserSessionCookie(req.headers.cookie);
+  if (!userSession) {
+    res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
+    return;
+  }
+
+  if (action === 'confirm') {
+    // A real app would process the payment here
+    console.log(`💳 Payment confirmed for cart ${cartId || 'unknown'} by user ${userSession.name} (session ${sessionId})`);
+
+    // Complete the elicitation
+    completeURLElicitation(elicitationId);
+
+    // Send a success response
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Payment Confirmed</title>
+        <style>
+          body { font-family: sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; text-align: center; }
+          .success { background: #d4edda; color: #155724; padding: 20px; margin: 20px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="success">
+          <h1>Payment Confirmed ✓</h1>
+          <p>Your payment has been successfully processed.</p>
+          ${cartId ? `<p><strong>Cart ID:</strong> ${cartId}</p>` : ''}
+        </div>
+        <p>You can close this window and return to your MCP client.</p>
+      </body>
+      </html>
+    `);
+  } else if (action === 'cancel') {
+    console.log(`💳 Payment cancelled for cart ${cartId || 'unknown'} by user ${userSession.name} (session ${sessionId})`);
+
+    // The client will still receive a notifications/elicitation/complete notification,
+    // which indicates that the out-of-band interaction is complete (but not necessarily successful)
+    completeURLElicitation(elicitationId);
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Payment Cancelled</title>
+        <style>
+          body { font-family: sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; text-align: center; }
+          .info { background: #d1ecf1; color: #0c5460; padding: 20px; margin: 20px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="info">
+          <h1>Payment Cancelled</h1>
+          <p>Your payment has been cancelled.</p>
+        </div>
+        <p>You can close this window and return to your MCP client.</p>
+      </body>
+      </html>
+    `);
+  } else {
+    res.status(400).send('<h1>Error</h1><p>Invalid action</p>');
+  }
+});
+
 // Map to store transports by session ID
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
 
-// Track sessions that need an elicitation request to be sent
-const sessionsNeedingElicitation: { [sessionId: string]: ElicitationSender } = {};
+// Interface for a function that can send an elicitation request
+type ElicitationSender = (params: ElicitRequestURLParams) => Promise<ElicitResult>;
+type ElicitationNotificationSender = (notification: ElicitationCompleteNotification) => Promise<void>;
 
-// MCP POST endpoint with optional auth
+// Track sessions that need an elicitation request to be sent
+interface SessionElicitationInfo {
+  elicitationSender: ElicitationSender;
+  notificationSender: ElicitationNotificationSender;
+}
+const sessionsNeedingElicitation: { [sessionId: string]: SessionElicitationInfo } = {};
+
+// MCP POST endpoint
 const mcpPostHandler = async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (sessionId) {
-    console.log(`Received MCP request for session: ${sessionId}`);
-  } else {
-    console.log('Request body:', req.body);
-  }
+  console.debug(`Received MCP POST for session: ${sessionId || 'unknown'}`);
 
-  if (useOAuth && req.auth) {
-    console.log('Authenticated user:', req.auth);
-  }
   try {
     let transport: StreamableHTTPServerTransport;
     if (sessionId && transports[sessionId]) {
@@ -757,7 +632,12 @@ const mcpPostHandler = async (req: Request, res: Response) => {
           // This avoids race conditions where requests might come in before the session is stored
           console.log(`Session initialized with ID: ${sessionId}`);
           transports[sessionId] = transport;
-          sessionsNeedingElicitation[sessionId] = server.server.elicitInput.bind(server.server);
+          sessionsNeedingElicitation[sessionId] = {
+            elicitationSender: server.server.elicitInput.bind(server.server),
+            notificationSender: async (notification: ElicitationCompleteNotification) => {
+              await server.server.notification(notification);
+            },
+          };
         },
       });
 
@@ -808,12 +688,8 @@ const mcpPostHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Set up routes with conditional auth middleware
-if (useOAuth && authMiddleware) {
-  app.post('/mcp', authMiddleware, mcpPostHandler);
-} else {
-  app.post('/mcp', mcpPostHandler);
-}
+// Set up routes with auth middleware
+app.post('/mcp', authMiddleware, mcpPostHandler);
 
 // Handle GET requests for SSE streams (using built-in support from StreamableHTTP)
 const mcpGetHandler = async (req: Request, res: Response) => {
@@ -821,10 +697,6 @@ const mcpGetHandler = async (req: Request, res: Response) => {
   if (!sessionId || !transports[sessionId]) {
     res.status(400).send('Invalid or missing session ID');
     return;
-  }
-
-  if (useOAuth && req.auth) {
-    console.log('Authenticated SSE connection from user:', req.auth);
   }
 
   // Check for Last-Event-ID header for resumability
@@ -839,14 +711,14 @@ const mcpGetHandler = async (req: Request, res: Response) => {
   await transport.handleRequest(req, res);
 
   if (sessionsNeedingElicitation[sessionId]) {
-    const elicitationSender = sessionsNeedingElicitation[sessionId];
+    const { elicitationSender, notificationSender } = sessionsNeedingElicitation[sessionId];
 
     // Send an elicitation request to the client in the background
-    sendApiKeyElicitation(sessionId, elicitationSender)
+    sendApiKeyElicitation(sessionId, elicitationSender, notificationSender)
       .then(() => {
         // Only delete on successful send for this demo
         delete sessionsNeedingElicitation[sessionId];
-        console.log(`Successfully sent API key elicitation for session ${sessionId}`);
+        console.log(`🔑 URL elicitation demo: Finished sending API key elicitation request for session ${sessionId}`);
       })
       .catch(error => {
         console.error('Error sending API key elicitation:', error);
@@ -856,11 +728,7 @@ const mcpGetHandler = async (req: Request, res: Response) => {
 };
 
 // Set up GET route with conditional auth middleware
-if (useOAuth && authMiddleware) {
-  app.get('/mcp', authMiddleware, mcpGetHandler);
-} else {
-  app.get('/mcp', mcpGetHandler);
-}
+app.get('/mcp', authMiddleware, mcpGetHandler);
 
 // Handle DELETE requests for session termination (according to MCP spec)
 const mcpDeleteHandler = async (req: Request, res: Response) => {
@@ -883,12 +751,8 @@ const mcpDeleteHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Set up DELETE route with conditional auth middleware
-if (useOAuth && authMiddleware) {
-  app.delete('/mcp', authMiddleware, mcpDeleteHandler);
-} else {
-  app.delete('/mcp', mcpDeleteHandler);
-}
+// Set up DELETE route with auth middleware
+app.delete('/mcp', authMiddleware, mcpDeleteHandler);
 
 app.listen(MCP_PORT, (error) => {
   if (error) {

@@ -39,7 +39,6 @@ import {
   type UnsubscribeRequest,
   ElicitResultSchema,
   ElicitRequestSchema,
-  ElicitTrackResultSchema
 } from '../types.js';
 import { AjvJsonSchemaValidator } from '../validation/ajv-provider.js';
 import type { JsonSchemaType, JsonSchemaValidator, jsonSchemaValidator } from '../validation/types.js';
@@ -362,14 +361,6 @@ export class Client<
         }
         break;
 
-      case "elicitation/track":
-        if (!this._capabilities.elicitation?.url) {
-          throw new Error(
-            `Client does not support URL elicitation (required for ${method})`,
-          );
-        }
-        break;
-
       case 'initialize':
         // No specific capability required for initialize
         break;
@@ -466,26 +457,6 @@ export class Client<
 
   async unsubscribeResource(params: UnsubscribeRequest['params'], options?: RequestOptions) {
     return this.request({ method: 'resources/unsubscribe', params }, EmptyResultSchema, options);
-  }
-
-  async trackElicitation(elicitationId: string, progressCallback?: ProgressCallback, options?: RequestOptions) {
-    options = {
-      ...options,
-      onprogress: progressCallback,
-    }
-    await this.request(
-      {
-        method: "elicitation/track",
-        params: {
-          elicitationId,
-          _meta: {
-            progressToken: 0, // This will be overridden by the client's internal progress token, but is required for typescript
-          },
-        },
-      },
-      ElicitTrackResultSchema,
-      options,
-    );
   }
 
   async callTool(

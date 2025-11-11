@@ -1,4 +1,4 @@
-import { mergeCapabilities, Protocol, RequestHandlerExtra, type ProtocolOptions, type RequestOptions } from '../shared/protocol.js';
+import { mergeCapabilities, Protocol, type ProtocolOptions, type RequestOptions } from '../shared/protocol.js';
 import {
   type ClientCapabilities,
   type CreateMessageRequest,
@@ -30,26 +30,9 @@ import {
   type ServerResult,
   SetLevelRequestSchema,
   SUPPORTED_PROTOCOL_VERSIONS,
-  ElicitTrackRequestSchema,
-  ElicitTrackRequest,
-  ElicitTrackResult,
-  ProgressToken,
 } from '../types.js';
 import { AjvJsonSchemaValidator } from '../validation/ajv-provider.js';
 import type { JsonSchemaType, jsonSchemaValidator } from '../validation/types.js';
-
-/**
- * Handler for elicitation track requests.
- * @param elicitationId - The ID of the elicitation to track
- * @param progressToken - The progress token for tracking updates
- * @param extra - Additional request context
- * @returns The tracking result indicating the elicitation status
- */
-export type ElicitTrackHandler = (
-  elicitationId: string,
-  progressToken: ProgressToken,
-  extra: RequestHandlerExtra<ServerRequest, ServerNotification>
-) => ElicitTrackResult | Promise<ElicitTrackResult>;
 
 export type ServerOptions = ProtocolOptions & {
   /**
@@ -61,12 +44,6 @@ export type ServerOptions = ProtocolOptions & {
    * Optional instructions describing how to use the server and its features.
    */
   instructions?: string;
-
-  /**
-   * Optional handler for elicitation track requests.
-   * If not provided, track requests will return an error indicating the server cannot track elicitations.
-   */
-  onElicitTrack?: ElicitTrackHandler;
 
   /**
    * JSON Schema validator for elicitation response validation.
@@ -143,11 +120,6 @@ export class Server<
   oninitialized?: () => void;
 
   /**
-   * Optional handler for elicitation track requests.
-   */
-  onElicitTrack?: ElicitTrackHandler;
-
-  /**
    * Initializes this server with the given name and version information.
    */
   constructor(
@@ -157,12 +129,10 @@ export class Server<
     super(options);
     this._capabilities = options?.capabilities ?? {};
     this._instructions = options?.instructions;
-    this.onElicitTrack = options?.onElicitTrack;
     this._jsonSchemaValidator = options?.jsonSchemaValidator ?? new AjvJsonSchemaValidator();
 
     this.setRequestHandler(InitializeRequestSchema, request => this._oninitialize(request));
     this.setNotificationHandler(InitializedNotificationSchema, () => this.oninitialized?.());
-    this.setRequestHandler(ElicitTrackRequestSchema, (request, extra) => this._onElicitTrackRequest(request, extra));
 
     if (this._capabilities.logging) {
       this.setRequestHandler(SetLevelRequestSchema, async (request, extra) => {
@@ -255,6 +225,12 @@ export class Server<
         }
         break;
 
+      case 'notifications/elicitation/complete':
+        if (!this._clientCapabilities?.elicitation?.url) {
+          throw new Error(`Client does not support URL elicitation (required for ${method})`);
+        }
+        break;
+
       case 'notifications/cancelled':
         // Cancellation notifications are always allowed
         break;
@@ -303,7 +279,6 @@ export class Server<
 
       case 'ping':
       case 'initialize':
-      case "elicitation/track":
         // No specific capability required for these methods
         break;
     }
@@ -323,39 +298,6 @@ export class Server<
       serverInfo: this._serverInfo,
       ...(this._instructions && { instructions: this._instructions })
     };
-  }
-
-  /**
-   * Handles an elicitation track request.
-   *
-   * @param request - The elicitation track request.
-   * @param extra - Additional request context.
-   * @returns The elicitation track result.
-   */
-  private async _onElicitTrackRequest(
-    request: ElicitTrackRequest,
-    extra: RequestHandlerExtra<ServerRequest, ServerNotification>
-  ): Promise<ElicitTrackResult> {
-    // Ensure the client supports URL elicitation if it wants to track elicitations
-    if (!this._clientCapabilities?.elicitation?.url) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        "Client does not support URL elicitation (required for tracking elicitations)"
-      );
-    }
-
-    const { elicitationId } = request.params;
-    const progressToken = request.params._meta!.progressToken;
-
-    if (this.onElicitTrack) {
-      return await Promise.resolve(this.onElicitTrack(elicitationId, progressToken, extra));
-    }
-
-    // Default behavior: server doesn't support tracking elicitations
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      "Server does not support tracking elicitation."
-    );
   }
 
   /**

@@ -15,39 +15,40 @@ import {
   McpError,
   ErrorCode,
   ElicitationRequiredError,
+  ElicitationCompleteNotification,
+  ElicitationCompleteNotificationSchema,
 } from '../../types.js';
 import { getDisplayName } from '../../shared/metadataUtils.js';
 import Ajv from "ajv";
-import { OAuthClientMetadata } from 'src/shared/auth.js';
+import { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '../../shared/auth.js';
 import { exec } from 'node:child_process';
 import { InMemoryOAuthClientProvider } from './simpleOAuthClientProvider.js';
-import { UnauthorizedError } from 'src/client/auth.js';
+import { UnauthorizedError } from '../../client/auth.js';
 import { createServer } from 'node:http';
 
-// Check for OAuth flag
-const useOAuth = process.argv.includes('--oauth');
+// Set up OAuth (required for this example)
 const OAUTH_CALLBACK_PORT = 8090; // Use different port than auth server (3001)
 const OAUTH_CALLBACK_URL = `http://localhost:${OAUTH_CALLBACK_PORT}/callback`;
 let oauthProvider: InMemoryOAuthClientProvider | undefined = undefined;
-if (useOAuth) {
-  console.log('Getting OAuth token...');
-  const clientMetadata: OAuthClientMetadata = {
-    client_name: 'Elicitation MCP Client',
-    redirect_uris: [OAUTH_CALLBACK_URL],
-    grant_types: ['authorization_code', 'refresh_token'],
-    response_types: ['code'],
-    token_endpoint_auth_method: 'client_secret_post',
-    scope: 'mcp:tools'
-  };
-  oauthProvider = new InMemoryOAuthClientProvider(
-    OAUTH_CALLBACK_URL,
-    clientMetadata,
-    (redirectUrl: URL) => {
-      console.log(`🌐 Opening browser for OAuth redirect: ${redirectUrl.toString()}`);
-      openBrowser(redirectUrl.toString());
-    }
-  );
-}
+
+console.log('Getting OAuth token...');
+const clientMetadata: OAuthClientMetadata = {
+  client_name: 'Elicitation MCP Client',
+  redirect_uris: [OAUTH_CALLBACK_URL],
+  grant_types: ['authorization_code', 'refresh_token'],
+  response_types: ['code'],
+  token_endpoint_auth_method: 'client_secret_post',
+  scope: 'mcp:tools'
+};
+oauthProvider = new InMemoryOAuthClientProvider(
+  OAUTH_CALLBACK_URL,
+  clientMetadata,
+  (redirectUrl: URL) => {
+    console.log(`🌐 Opening browser for OAuth redirect: ${redirectUrl.toString()}`);
+    openBrowser(redirectUrl.toString());
+  }
+);
+
 
 // Parse repeated CLI headers: --header "Key: Value" (also supports -H)
 function parseHeadersFromArgv(argv: string[]): Record<string, string> {
@@ -93,6 +94,7 @@ const readline = createInterface({
 });
 let abortCommand = new AbortController();
 
+
 // Global client and transport for interactive commands
 let client: Client | null = null;
 let transport: StreamableHTTPClientTransport | null = null;
@@ -111,6 +113,13 @@ let isProcessingElicitations = false;
 const elicitationQueue: QueuedElicitation[] = [];
 let elicitationQueueSignal: (() => void) | null = null;
 let elicitationsCompleteSignal: (() => void) | null = null;
+
+// Map to track pending URL elicitations waiting for completion notifications
+const pendingURLElicitations = new Map<string, {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}>();
 
 async function main(): Promise<void> {
   console.log('MCP Interactive Client');
@@ -157,8 +166,7 @@ function printHelp(): void {
   console.log('  reconnect                  - Reconnect to the server');
   console.log('  list-tools                 - List available tools');
   console.log('  call-tool <name> [args]    - Call a tool with optional JSON arguments');
-  console.log('  collect-info [type]        - Test form-mode elicitation with collect-user-info tool (contact/preferences/feedback)');
-  console.log('  payment-confirm            - Test url-mode elicitation via error response with payment-confirm tool');
+  console.log('  payment-confirm            - Test URL elicitation via error response with payment-confirm tool');
   console.log('  third-party-auth           - Test tool that requires third-party OAuth credentials');
   console.log('  help                       - Show this help');
   console.log('  quit                       - Exit the program');
@@ -216,10 +224,6 @@ async function commandLoop(): Promise<void> {
             }
             await callTool(toolName, toolArgs);
           }
-          break;
-
-        case 'collect-info':
-          await callCollectInfoTool(args[1] || 'contact');
           break;
 
         case 'payment-confirm':
@@ -355,14 +359,13 @@ async function handleElicitationRequest(request: ElicitRequest): Promise<ElicitR
   console.log('\n🔔 Elicitation Request Received:');
   console.log(`Mode: ${mode}`);
 
-  if (mode === 'form') {
-    return await handleFormElicitationRequest(request);
-  } else if (mode === 'url') {
+  if (mode === 'url') {
     return {
       action: await handleURLElicitation(request.params as ElicitRequestURLParams),
     };
   } else {
-    // This is impossible now, but illustrates defensive programming for future modes
+    // Should not happen because the client declares its capabilities to the server,
+    // but being defensive is a good practice:
     throw new McpError(
       ErrorCode.InvalidParams,
       `Unsupported elicitation mode: ${mode}`
@@ -398,7 +401,7 @@ async function handleURLElicitation(params: ElicitRequestURLParams): Promise<Eli
   // Example security warning to help prevent phishing attacks
   console.log('\n⚠️  \x1b[33mSECURITY WARNING\x1b[0m ⚠️');
   console.log('\x1b[33mThe server is requesting you to open an external URL.\x1b[0m');
-  console.log('\x1b[33mOnly proceed if you trust this server and understand why it needs this.\x1b[0m');
+  console.log('\x1b[33mOnly proceed if you trust this server and understand why it needs this.\x1b[0m\n');
   console.log(`🌐 Target domain: \x1b[36m${domain}\x1b[0m`);
   console.log(`🔗 Full URL: \x1b[36m${url}\x1b[0m`);
   console.log(`\nℹ️ Server's reason:\n\n\x1b[36m${message}\x1b[0m\n`);
@@ -419,34 +422,26 @@ async function handleURLElicitation(params: ElicitRequestURLParams): Promise<Eli
     return 'cancel';
   }
 
-  // 3. Start tracking elicitation progress in the background
-  const trackingPromise = (async () => {
-    console.log(`\n🔮 Started tracking progress for elicitation ${elicitationId}`);
-    for (let attempt = 3; attempt > 0; attempt--) {
-      try {
-        await client!.trackElicitation(elicitationId, (progress) => {
-          const step = progress.progress
-          const total = progress.total || 'N';
-          console.log(`\x1b[36m[🔮 Elicitation Progress for ${elicitationId}]\x1b[0m [${step}/${total}] ${progress.message}`);
-        });
-        console.log(`\x1b[32m✅ Elicitation ${elicitationId} completed successfully!\x1b[0m`);
-        return; // Success - exit the function
-      } catch (error) {
-        if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) {
-          console.log('Progress tracking timed out. Retrying...');
-          continue; // Try again
-        } else if (error instanceof McpError && error.code === ErrorCode.InvalidParams) {
-          console.log('Unable to track elicitation progress for this request');
-          return; // Server doesn't support tracking for this elicitation - exit gracefully
-        } else {
-          throw error; // Unexpected error - let outer handler deal with it
-        }
-      }
-    }
-    console.log(`\x1b[31m❌ Elicitation ${elicitationId} took too long to complete. No longer tracking progress.\x1b[0m`);
-  })();
-  trackingPromise.catch(error => {
-    console.error('Background tracking failed:', error);
+  // 3. Wait for completion notification in the background
+  const completionPromise = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingURLElicitations.delete(elicitationId);
+      console.log(`\x1b[31m❌ Elicitation ${elicitationId} timed out waiting for completion.\x1b[0m`);
+      reject(new Error('Elicitation completion timeout'));
+    }, 5 * 60 * 1000); // 5 minute timeout
+
+    pendingURLElicitations.set(elicitationId, {
+      resolve: () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      reject,
+      timeout,
+    });
+  });
+
+  completionPromise.catch(error => {
+    console.error('Background completion wait failed:', error);
   });
 
   // 4. Open the URL in the browser
@@ -454,204 +449,12 @@ async function handleURLElicitation(params: ElicitRequestURLParams): Promise<Eli
   await openBrowser(url);
 
   console.log('\n⏳ Waiting for you to complete the interaction in your browser...');
-  console.log('   The server will be notified once you complete the action.');
+  console.log('   The server will send a notification once you complete the action.');
 
   // 5. Acknowledge the user accepted the elicitation
   return 'accept';
 }
 
-async function handleFormElicitationRequest(request: ElicitRequest): Promise<ElicitResult> {
-  // For form elicitations print the message straight away
-  console.log(`Message: ${request.params.message}`);
-  console.log('Requested Schema:'); // Print the schema for illustration
-  console.log(JSON.stringify(request.params.requestedSchema, null, 2));
-
-  const params = request.params as ElicitRequestFormParams;
-  const schema = params.requestedSchema;
-  const properties = schema.properties;
-  const required = schema.required || [];
-
-  // Set up AJV validator for the requested schema
-  const ajv = new Ajv();
-  const validate = ajv.compile(schema);
-
-  let attempts = 0;
-  const maxAttempts = 3;
-
-  while (attempts < maxAttempts) {
-    attempts++;
-    console.log(`\nPlease provide the following information (attempt ${attempts}/${maxAttempts}):`);
-
-    const content: Record<string, unknown> = {};
-    let inputCancelled = false;
-
-    // Collect input for each field
-    for (const [fieldName, fieldSchema] of Object.entries(properties)) {
-      const field = fieldSchema as {
-        type?: string;
-        title?: string;
-        description?: string;
-        default?: unknown;
-        enum?: string[];
-        minimum?: number;
-        maximum?: number;
-        minLength?: number;
-        maxLength?: number;
-        format?: string;
-      };
-
-      const isRequired = required.includes(fieldName);
-      let prompt = `${field.title || fieldName}`;
-
-      // Add helpful information to the prompt
-      if (field.description) {
-        prompt += ` (${field.description})`;
-      }
-      if (field.enum) {
-        prompt += ` [options: ${field.enum.join(', ')}]`;
-      }
-      if (field.type === 'number' || field.type === 'integer') {
-        if (field.minimum !== undefined && field.maximum !== undefined) {
-          prompt += ` [${field.minimum}-${field.maximum}]`;
-        } else if (field.minimum !== undefined) {
-          prompt += ` [min: ${field.minimum}]`;
-        } else if (field.maximum !== undefined) {
-          prompt += ` [max: ${field.maximum}]`;
-        }
-      }
-      if (field.type === 'string' && field.format) {
-        prompt += ` [format: ${field.format}]`;
-      }
-      if (isRequired) {
-        prompt += ' *required*';
-      }
-      if (field.default !== undefined) {
-        prompt += ` [default: ${field.default}]`;
-      }
-
-      prompt += ': ';
-
-      const answer = await new Promise<string>((resolve) => {
-        readline.question(prompt, (input) => {
-          resolve(input.trim());
-        });
-      });
-
-      // Check for cancellation
-      if (answer.toLowerCase() === 'cancel' || answer.toLowerCase() === 'c') {
-        inputCancelled = true;
-        break;
-      }
-
-      // Parse and validate the input
-      try {
-        if (answer === '' && field.default !== undefined) {
-          content[fieldName] = field.default;
-        } else if (answer === '' && !isRequired) {
-          // Skip optional empty fields
-          continue;
-        } else if (answer === '') {
-          throw new Error(`${fieldName} is required`);
-        } else {
-          // Parse the value based on type
-          let parsedValue: unknown;
-
-          if (field.type === 'boolean') {
-            parsedValue = answer.toLowerCase() === 'true' || answer.toLowerCase() === 'yes' || answer === '1';
-          } else if (field.type === 'number') {
-            parsedValue = parseFloat(answer);
-            if (isNaN(parsedValue as number)) {
-              throw new Error(`${fieldName} must be a valid number`);
-            }
-          } else if (field.type === 'integer') {
-            parsedValue = parseInt(answer, 10);
-            if (isNaN(parsedValue as number)) {
-              throw new Error(`${fieldName} must be a valid integer`);
-            }
-          } else if (field.enum) {
-            if (!field.enum.includes(answer)) {
-              throw new Error(`${fieldName} must be one of: ${field.enum.join(', ')}`);
-            }
-            parsedValue = answer;
-          } else {
-            parsedValue = answer;
-          }
-
-          content[fieldName] = parsedValue;
-        }
-      } catch (error) {
-        console.log(`❌ Error: ${error}`);
-        // Continue to next attempt
-        break;
-      }
-    }
-
-    if (inputCancelled) {
-      return { action: 'cancel' };
-    }
-
-    // If we didn't complete all fields due to an error, try again
-    if (Object.keys(content).length !== Object.keys(properties).filter(name =>
-      required.includes(name) || content[name] !== undefined
-    ).length) {
-      if (attempts < maxAttempts) {
-        console.log('Please try again...');
-        continue;
-      } else {
-        console.log('Maximum attempts reached. Declining request.');
-        return { action: 'decline' };
-      }
-    }
-
-    // Validate the complete object against the schema
-    const isValid = validate(content);
-
-    if (!isValid) {
-      console.log('❌ Validation errors:');
-      validate.errors?.forEach(error => {
-        console.log(`  - ${error.dataPath || 'root'}: ${error.message}`);
-      });
-
-      if (attempts < maxAttempts) {
-        console.log('Please correct the errors and try again...');
-        continue;
-      } else {
-        console.log('Maximum attempts reached. Declining request.');
-        return { action: 'decline' };
-      }
-    }
-
-    // Show the collected data and ask for confirmation
-    console.log('\n✅ Collected data:');
-    console.log(JSON.stringify(content, null, 2));
-
-    const confirmAnswer = await new Promise<string>((resolve) => {
-      readline.question('\nSubmit this information? (yes/no/cancel): ', (input) => {
-        resolve(input.trim().toLowerCase());
-      });
-    });
-
-
-    if (confirmAnswer === 'yes' || confirmAnswer === 'y') {
-      return {
-        action: 'accept',
-        content,
-      };
-    } else if (confirmAnswer === 'cancel' || confirmAnswer === 'c') {
-      return { action: 'cancel' };
-    } else if (confirmAnswer === 'no' || confirmAnswer === 'n') {
-      if (attempts < maxAttempts) {
-        console.log('Please re-enter the information...');
-        continue;
-      } else {
-        return { action: 'decline' };
-      }
-    }
-  }
-
-  console.log('Maximum attempts reached. Declining request.');
-  return { action: 'decline' };
-}
 /**
  * Example OAuth callback handler - in production, use a more robust approach
  * for handling callbacks and storing tokens
@@ -733,7 +536,8 @@ async function connect(url?: string): Promise<void> {
   }, {
     capabilities: {
       elicitation: {
-        form: {},
+        // Only URL elicitation is supported in this demo
+        // (see server/elicitationExample.ts for a demo of form mode elicitation)
         url: {}
       },
     },
@@ -757,6 +561,21 @@ async function connect(url?: string): Promise<void> {
 
   // Set up elicitation request handler with proper validation
   client.setRequestHandler(ElicitRequestSchema, elicitationRequestHandler);
+
+  // Set up notification handler for elicitation completion
+  client.setNotificationHandler(ElicitationCompleteNotificationSchema, (notification) => {
+    const { elicitationId } = notification.params;
+    const pending = pendingURLElicitations.get(elicitationId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      pendingURLElicitations.delete(elicitationId);
+      console.log(`\x1b[32m✅ Elicitation ${elicitationId} completed!\x1b[0m`);
+      pending.resolve();
+    } else {
+      // Shouldn't happen - discard it!
+      console.warn(`Received completion notification for unknown elicitation: ${elicitationId}`);
+    }
+  });
 
   try {
     console.log(`Connecting to ${serverUrl}...`);
@@ -941,11 +760,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<vo
     }
     console.log(`Error calling tool ${name}: ${error}`);
   }
-}
-
-async function callCollectInfoTool(infoType: string): Promise<void> {
-  console.log(`Testing elicitation with collect-user-info tool (${infoType})...`);
-  await callTool('collect-user-info', { infoType });
 }
 
 async function cleanup(): Promise<void> {
