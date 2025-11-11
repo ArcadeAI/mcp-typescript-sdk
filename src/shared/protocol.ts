@@ -397,7 +397,7 @@ export abstract class Protocol<SendRequestT extends Request, SendNotificationT e
                         error: {
                             code: Number.isSafeInteger(error['code']) ? error['code'] : ErrorCode.InternalError,
                             message: error.message ?? 'Internal error',
-                            ...(error["data"] !== undefined && { data: error["data"] }),
+                            ...(error['data'] !== undefined && { data: error['data'] })
                         }
                     });
                 }

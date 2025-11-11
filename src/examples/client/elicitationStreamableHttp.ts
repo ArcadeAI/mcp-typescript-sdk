@@ -2,25 +2,22 @@ import { Client } from '../../client/index.js';
 import { StreamableHTTPClientTransport } from '../../client/streamableHttp.js';
 import { createInterface } from 'node:readline';
 import {
-  ListToolsRequest,
-  ListToolsResultSchema,
-  CallToolRequest,
-  CallToolResultSchema,
-  ElicitRequestSchema,
-  ElicitRequest,
-  ElicitResult,
-  ResourceLink,
-  ElicitRequestFormParams,
-  ElicitRequestURLParams,
-  McpError,
-  ErrorCode,
-  ElicitationRequiredError,
-  ElicitationCompleteNotification,
-  ElicitationCompleteNotificationSchema,
+    ListToolsRequest,
+    ListToolsResultSchema,
+    CallToolRequest,
+    CallToolResultSchema,
+    ElicitRequestSchema,
+    ElicitRequest,
+    ElicitResult,
+    ResourceLink,
+    ElicitRequestURLParams,
+    McpError,
+    ErrorCode,
+    ElicitationRequiredError,
+    ElicitationCompleteNotificationSchema
 } from '../../types.js';
 import { getDisplayName } from '../../shared/metadataUtils.js';
-import Ajv from "ajv";
-import { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '../../shared/auth.js';
+import { OAuthClientMetadata } from '../../shared/auth.js';
 import { exec } from 'node:child_process';
 import { InMemoryOAuthClientProvider } from './simpleOAuthClientProvider.js';
 import { UnauthorizedError } from '../../client/auth.js';
@@ -33,67 +30,61 @@ let oauthProvider: InMemoryOAuthClientProvider | undefined = undefined;
 
 console.log('Getting OAuth token...');
 const clientMetadata: OAuthClientMetadata = {
-  client_name: 'Elicitation MCP Client',
-  redirect_uris: [OAUTH_CALLBACK_URL],
-  grant_types: ['authorization_code', 'refresh_token'],
-  response_types: ['code'],
-  token_endpoint_auth_method: 'client_secret_post',
-  scope: 'mcp:tools'
+    client_name: 'Elicitation MCP Client',
+    redirect_uris: [OAUTH_CALLBACK_URL],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'client_secret_post',
+    scope: 'mcp:tools'
 };
-oauthProvider = new InMemoryOAuthClientProvider(
-  OAUTH_CALLBACK_URL,
-  clientMetadata,
-  (redirectUrl: URL) => {
+oauthProvider = new InMemoryOAuthClientProvider(OAUTH_CALLBACK_URL, clientMetadata, (redirectUrl: URL) => {
     console.log(`🌐 Opening browser for OAuth redirect: ${redirectUrl.toString()}`);
     openBrowser(redirectUrl.toString());
-  }
-);
-
+});
 
 // Parse repeated CLI headers: --header "Key: Value" (also supports -H)
 function parseHeadersFromArgv(argv: string[]): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--header' || arg === '-H') {
-      const raw = argv[i + 1];
-      if (raw) {
-        const idx = raw.indexOf(':');
-        if (idx !== -1) {
-          const name = raw.slice(0, idx).trim();
-          const value = raw.slice(idx + 1).trim();
-          if (name) headers[name] = value;
+    const headers: Record<string, string> = {};
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === '--header' || arg === '-H') {
+            const raw = argv[i + 1];
+            if (raw) {
+                const idx = raw.indexOf(':');
+                if (idx !== -1) {
+                    const name = raw.slice(0, idx).trim();
+                    const value = raw.slice(idx + 1).trim();
+                    if (name) headers[name] = value;
+                }
+                i++;
+            }
         }
-        i++;
-      }
     }
-  }
-  return headers;
+    return headers;
 }
 
 const cliHeaders: Record<string, string> = parseHeadersFromArgv(process.argv);
 
 // Parse CLI url: --url value or --url=value
 function parseUrlFromArgv(argv: string[]): string | undefined {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--url') {
-      const value = argv[i + 1];
-      if (value) return value;
-    } else if (arg.startsWith('--url=')) {
-      return arg.slice('--url='.length);
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === '--url') {
+            const value = argv[i + 1];
+            if (value) return value;
+        } else if (arg.startsWith('--url=')) {
+            return arg.slice('--url='.length);
+        }
     }
-  }
-  return undefined;
+    return undefined;
 }
 
 // Create readline interface for user input
 const readline = createInterface({
-  input: process.stdin,
-  output: process.stdout
+    input: process.stdin,
+    output: process.stdout
 });
 let abortCommand = new AbortController();
-
 
 // Global client and transport for interactive commands
 let client: Client | null = null;
@@ -103,9 +94,9 @@ let sessionId: string | undefined = undefined;
 
 // Elicitation queue management
 interface QueuedElicitation {
-  request: ElicitRequest;
-  resolve: (result: ElicitResult) => void;
-  reject: (error: Error) => void;
+    request: ElicitRequest;
+    resolve: (result: ElicitResult) => void;
+    reject: (error: Error) => void;
 }
 
 let isProcessingCommand = false;
@@ -115,201 +106,204 @@ let elicitationQueueSignal: (() => void) | null = null;
 let elicitationsCompleteSignal: (() => void) | null = null;
 
 // Map to track pending URL elicitations waiting for completion notifications
-const pendingURLElicitations = new Map<string, {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
-}>();
+const pendingURLElicitations = new Map<
+    string,
+    {
+        resolve: () => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
+    }
+>();
 
 async function main(): Promise<void> {
-  console.log('MCP Interactive Client');
-  console.log('=====================');
+    console.log('MCP Interactive Client');
+    console.log('=====================');
 
-  // Override server URL from CLI if provided
-  const cliUrl = parseUrlFromArgv(process.argv);
-  if (cliUrl) {
-    serverUrl = cliUrl;
-  }
+    // Override server URL from CLI if provided
+    const cliUrl = parseUrlFromArgv(process.argv);
+    if (cliUrl) {
+        serverUrl = cliUrl;
+    }
 
-  // Connect to server immediately with default settings
-  await connect();
+    // Connect to server immediately with default settings
+    await connect();
 
-  // Start the elicitation loop in the background
-  elicitationLoop().catch(error => {
-    console.error('Unexpected error in elicitation loop:', error);
-    process.exit(1);
-  });
+    // Start the elicitation loop in the background
+    elicitationLoop().catch(error => {
+        console.error('Unexpected error in elicitation loop:', error);
+        process.exit(1);
+    });
 
-  // Short delay allowing the server to send any SSE elicitations on connection
-  await new Promise(resolve => setTimeout(resolve, 200));
+    // Short delay allowing the server to send any SSE elicitations on connection
+    await new Promise(resolve => setTimeout(resolve, 200));
 
-  // Wait until we are done processing any initial elicitations
-  await waitForElicitationsToComplete();
+    // Wait until we are done processing any initial elicitations
+    await waitForElicitationsToComplete();
 
-  // Print help and start the command loop
-  printHelp();
-  await commandLoop();
+    // Print help and start the command loop
+    printHelp();
+    await commandLoop();
 }
 
 async function waitForElicitationsToComplete(): Promise<void> {
-  // Wait until the queue is empty and nothing is being processed
-  while (elicitationQueue.length > 0 || isProcessingElicitations) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+    // Wait until the queue is empty and nothing is being processed
+    while (elicitationQueue.length > 0 || isProcessingElicitations) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
 }
 
 function printHelp(): void {
-  console.log('\nAvailable commands:');
-  console.log('  connect [url]              - Connect to MCP server (default: http://localhost:3000/mcp)');
-  console.log('  disconnect                 - Disconnect from server');
-  console.log('  terminate-session          - Terminate the current session');
-  console.log('  reconnect                  - Reconnect to the server');
-  console.log('  list-tools                 - List available tools');
-  console.log('  call-tool <name> [args]    - Call a tool with optional JSON arguments');
-  console.log('  payment-confirm            - Test URL elicitation via error response with payment-confirm tool');
-  console.log('  third-party-auth           - Test tool that requires third-party OAuth credentials');
-  console.log('  help                       - Show this help');
-  console.log('  quit                       - Exit the program');
+    console.log('\nAvailable commands:');
+    console.log('  connect [url]              - Connect to MCP server (default: http://localhost:3000/mcp)');
+    console.log('  disconnect                 - Disconnect from server');
+    console.log('  terminate-session          - Terminate the current session');
+    console.log('  reconnect                  - Reconnect to the server');
+    console.log('  list-tools                 - List available tools');
+    console.log('  call-tool <name> [args]    - Call a tool with optional JSON arguments');
+    console.log('  payment-confirm            - Test URL elicitation via error response with payment-confirm tool');
+    console.log('  third-party-auth           - Test tool that requires third-party OAuth credentials');
+    console.log('  help                       - Show this help');
+    console.log('  quit                       - Exit the program');
 }
 
 async function commandLoop(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    if (!isProcessingElicitations) {
-      resolve();
-    } else {
-      elicitationsCompleteSignal = resolve;
-    }
-  });
+    await new Promise<void>(resolve => {
+        if (!isProcessingElicitations) {
+            resolve();
+        } else {
+            elicitationsCompleteSignal = resolve;
+        }
+    });
 
-  readline.question('\n> ', { signal: abortCommand.signal }, async (input) => {
-    isProcessingCommand = true;
+    readline.question('\n> ', { signal: abortCommand.signal }, async input => {
+        isProcessingCommand = true;
 
-    const args = input.trim().split(/\s+/);
-    const command = args[0]?.toLowerCase();
+        const args = input.trim().split(/\s+/);
+        const command = args[0]?.toLowerCase();
 
-    try {
-      switch (command) {
-        case 'connect':
-          await connect(args[1]);
-          break;
+        try {
+            switch (command) {
+                case 'connect':
+                    await connect(args[1]);
+                    break;
 
-        case 'disconnect':
-          await disconnect();
-          break;
+                case 'disconnect':
+                    await disconnect();
+                    break;
 
-        case 'terminate-session':
-          await terminateSession();
-          break;
+                case 'terminate-session':
+                    await terminateSession();
+                    break;
 
-        case 'reconnect':
-          await reconnect();
-          break;
+                case 'reconnect':
+                    await reconnect();
+                    break;
 
-        case 'list-tools':
-          await listTools();
-          break;
+                case 'list-tools':
+                    await listTools();
+                    break;
 
-        case 'call-tool':
-          if (args.length < 2) {
-            console.log('Usage: call-tool <name> [args]');
-          } else {
-            const toolName = args[1];
-            let toolArgs = {};
-            if (args.length > 2) {
-              try {
-                toolArgs = JSON.parse(args.slice(2).join(' '));
-              } catch {
-                console.log('Invalid JSON arguments. Using empty args.');
-              }
+                case 'call-tool':
+                    if (args.length < 2) {
+                        console.log('Usage: call-tool <name> [args]');
+                    } else {
+                        const toolName = args[1];
+                        let toolArgs = {};
+                        if (args.length > 2) {
+                            try {
+                                toolArgs = JSON.parse(args.slice(2).join(' '));
+                            } catch {
+                                console.log('Invalid JSON arguments. Using empty args.');
+                            }
+                        }
+                        await callTool(toolName, toolArgs);
+                    }
+                    break;
+
+                case 'payment-confirm':
+                    await callPaymentConfirmTool();
+                    break;
+
+                case 'third-party-auth':
+                    await callThirdPartyAuthTool();
+                    break;
+
+                case 'help':
+                    printHelp();
+                    break;
+
+                case 'quit':
+                case 'exit':
+                    await cleanup();
+                    return;
+
+                default:
+                    if (command) {
+                        console.log(`Unknown command: ${command}`);
+                    }
+                    break;
             }
-            await callTool(toolName, toolArgs);
-          }
-          break;
+        } catch (error) {
+            console.error(`Error executing command: ${error}`);
+        } finally {
+            isProcessingCommand = false;
+        }
 
-        case 'payment-confirm':
-          await callPaymentConfirmTool();
-          break;
-
-        case 'third-party-auth':
-          await callThirdPartyAuthTool();
-          break;
-
-        case 'help':
-          printHelp();
-          break;
-
-        case 'quit':
-        case 'exit':
-          await cleanup();
-          return;
-
-        default:
-          if (command) {
-            console.log(`Unknown command: ${command}`);
-          }
-          break;
-      }
-    } catch (error) {
-      console.error(`Error executing command: ${error}`);
-    } finally {
-      isProcessingCommand = false;
-    }
-
-    // Process another command after we've processed the this one
-    await commandLoop();
-  });
+        // Process another command after we've processed the this one
+        await commandLoop();
+    });
 }
 
 async function elicitationLoop(): Promise<void> {
-  while (true) {
-    // Wait until we have elicitations to process
-    await new Promise<void>((resolve) => {
-      if (elicitationQueue.length > 0) {
-        resolve();
-      } else {
-        elicitationQueueSignal = resolve;
-      }
-    });
+    while (true) {
+        // Wait until we have elicitations to process
+        await new Promise<void>(resolve => {
+            if (elicitationQueue.length > 0) {
+                resolve();
+            } else {
+                elicitationQueueSignal = resolve;
+            }
+        });
 
-    isProcessingElicitations = true;
-    abortCommand.abort(); // Abort the command loop if it's running
+        isProcessingElicitations = true;
+        abortCommand.abort(); // Abort the command loop if it's running
 
-    // Process all queued elicitations
-    while (elicitationQueue.length > 0) {
-      const queued = elicitationQueue.shift()!;
-      console.log(`📤 Processing queued elicitation (${elicitationQueue.length} remaining)`);
+        // Process all queued elicitations
+        while (elicitationQueue.length > 0) {
+            const queued = elicitationQueue.shift()!;
+            console.log(`📤 Processing queued elicitation (${elicitationQueue.length} remaining)`);
 
-      try {
-        const result = await handleElicitationRequest(queued.request);
-        queued.resolve(result);
-      } catch (error) {
-        queued.reject(error instanceof Error ? error : new Error(String(error)));
-      }
+            try {
+                const result = await handleElicitationRequest(queued.request);
+                queued.resolve(result);
+            } catch (error) {
+                queued.reject(error instanceof Error ? error : new Error(String(error)));
+            }
+        }
+
+        console.log('✅ All queued elicitations processed. Resuming command loop...\n');
+        isProcessingElicitations = false;
+
+        // Reset the abort controller for the next command loop
+        abortCommand = new AbortController();
+
+        // Resume the command loop
+        if (elicitationsCompleteSignal) {
+            elicitationsCompleteSignal();
+            elicitationsCompleteSignal = null;
+        }
     }
-
-    console.log('✅ All queued elicitations processed. Resuming command loop...\n');
-    isProcessingElicitations = false;
-
-    // Reset the abort controller for the next command loop
-    abortCommand = new AbortController();
-
-    // Resume the command loop
-    if (elicitationsCompleteSignal) {
-      elicitationsCompleteSignal();
-      elicitationsCompleteSignal = null;
-    }
-  }
 }
 
 async function openBrowser(url: string): Promise<void> {
-  const command = `open "${url}"`;
+    const command = `open "${url}"`;
 
-  exec(command, (error) => {
-    if (error) {
-      console.error(`Failed to open browser: ${error.message}`);
-      console.log(`Please manually open: ${url}`);
-    }
-  });
+    exec(command, error => {
+        if (error) {
+            console.error(`Failed to open browser: ${error.message}`);
+            console.log(`Please manually open: ${url}`);
+        }
+    });
 }
 
 /**
@@ -322,28 +316,28 @@ async function openBrowser(url: string): Promise<void> {
  * @returns The elicitation result
  */
 async function elicitationRequestHandler(request: ElicitRequest): Promise<ElicitResult> {
-  // If we are processing a command, handle this elicitation immediately
-  if (isProcessingCommand) {
-    console.log('📋 Processing elicitation immediately (during command execution)');
-    return await handleElicitationRequest(request);
-  }
-
-  // Otherwise, queue the request to be handled by the elicitation loop
-  console.log(`📥 Queueing elicitation request (queue size will be: ${elicitationQueue.length + 1})`);
-
-  return new Promise<ElicitResult>((resolve, reject) => {
-    elicitationQueue.push({
-      request,
-      resolve,
-      reject
-    });
-
-    // Signal the elicitation loop that there's work to do
-    if (elicitationQueueSignal) {
-      elicitationQueueSignal();
-      elicitationQueueSignal = null;
+    // If we are processing a command, handle this elicitation immediately
+    if (isProcessingCommand) {
+        console.log('📋 Processing elicitation immediately (during command execution)');
+        return await handleElicitationRequest(request);
     }
-  });
+
+    // Otherwise, queue the request to be handled by the elicitation loop
+    console.log(`📥 Queueing elicitation request (queue size will be: ${elicitationQueue.length + 1})`);
+
+    return new Promise<ElicitResult>((resolve, reject) => {
+        elicitationQueue.push({
+            request,
+            resolve,
+            reject
+        });
+
+        // Signal the elicitation loop that there's work to do
+        if (elicitationQueueSignal) {
+            elicitationQueueSignal();
+            elicitationQueueSignal = null;
+        }
+    });
 }
 
 /**
@@ -355,22 +349,19 @@ async function elicitationRequestHandler(request: ElicitRequest): Promise<Elicit
  * @returns The elicitation result
  */
 async function handleElicitationRequest(request: ElicitRequest): Promise<ElicitResult> {
-  const mode = request.params.mode;
-  console.log('\n🔔 Elicitation Request Received:');
-  console.log(`Mode: ${mode}`);
+    const mode = request.params.mode;
+    console.log('\n🔔 Elicitation Request Received:');
+    console.log(`Mode: ${mode}`);
 
-  if (mode === 'url') {
-    return {
-      action: await handleURLElicitation(request.params as ElicitRequestURLParams),
-    };
-  } else {
-    // Should not happen because the client declares its capabilities to the server,
-    // but being defensive is a good practice:
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      `Unsupported elicitation mode: ${mode}`
-    )
-  }
+    if (mode === 'url') {
+        return {
+            action: await handleURLElicitation(request.params as ElicitRequestURLParams)
+        };
+    } else {
+        // Should not happen because the client declares its capabilities to the server,
+        // but being defensive is a good practice:
+        throw new McpError(ErrorCode.InvalidParams, `Unsupported elicitation mode: ${mode}`);
+    }
 }
 
 /**
@@ -383,76 +374,79 @@ async function handleElicitationRequest(request: ElicitRequest): Promise<ElicitR
  * @returns The action to take (accept, cancel, or decline)
  */
 async function handleURLElicitation(params: ElicitRequestURLParams): Promise<ElicitResult['action']> {
-  const url = params.url;
-  const elicitationId = params.elicitationId;
-  const message = params.message;
-  console.log(`🆔 Elicitation ID: ${elicitationId}`); // Print for illustration
+    const url = params.url;
+    const elicitationId = params.elicitationId;
+    const message = params.message;
+    console.log(`🆔 Elicitation ID: ${elicitationId}`); // Print for illustration
 
-  // Parse URL to show domain for security
-  let domain = 'unknown domain';
-  try {
-    const parsedUrl = new URL(url);
-    domain = parsedUrl.hostname;
-  } catch {
-    console.error('Invalid URL provided by server');
-    return 'decline';
-  }
+    // Parse URL to show domain for security
+    let domain = 'unknown domain';
+    try {
+        const parsedUrl = new URL(url);
+        domain = parsedUrl.hostname;
+    } catch {
+        console.error('Invalid URL provided by server');
+        return 'decline';
+    }
 
-  // Example security warning to help prevent phishing attacks
-  console.log('\n⚠️  \x1b[33mSECURITY WARNING\x1b[0m ⚠️');
-  console.log('\x1b[33mThe server is requesting you to open an external URL.\x1b[0m');
-  console.log('\x1b[33mOnly proceed if you trust this server and understand why it needs this.\x1b[0m\n');
-  console.log(`🌐 Target domain: \x1b[36m${domain}\x1b[0m`);
-  console.log(`🔗 Full URL: \x1b[36m${url}\x1b[0m`);
-  console.log(`\nℹ️ Server's reason:\n\n\x1b[36m${message}\x1b[0m\n`);
+    // Example security warning to help prevent phishing attacks
+    console.log('\n⚠️  \x1b[33mSECURITY WARNING\x1b[0m ⚠️');
+    console.log('\x1b[33mThe server is requesting you to open an external URL.\x1b[0m');
+    console.log('\x1b[33mOnly proceed if you trust this server and understand why it needs this.\x1b[0m\n');
+    console.log(`🌐 Target domain: \x1b[36m${domain}\x1b[0m`);
+    console.log(`🔗 Full URL: \x1b[36m${url}\x1b[0m`);
+    console.log(`\nℹ️ Server's reason:\n\n\x1b[36m${message}\x1b[0m\n`);
 
-  // 1. Ask for user consent to open the URL
-  const consent = await new Promise<string>((resolve) => {
-    readline.question('\nDo you want to open this URL in your browser? (y/n): ', (input) => {
-      resolve(input.trim().toLowerCase());
+    // 1. Ask for user consent to open the URL
+    const consent = await new Promise<string>(resolve => {
+        readline.question('\nDo you want to open this URL in your browser? (y/n): ', input => {
+            resolve(input.trim().toLowerCase());
+        });
     });
-  });
 
-  // 2. If user did not consent, return appropriate result
-  if (consent === 'no' || consent === 'n') {
-    console.log('❌ URL navigation declined.');
-    return 'decline';
-  } else if (consent !== 'yes' && consent !== 'y') {
-    console.log('🚫 Invalid response. Cancelling elicitation.');
-    return 'cancel';
-  }
+    // 2. If user did not consent, return appropriate result
+    if (consent === 'no' || consent === 'n') {
+        console.log('❌ URL navigation declined.');
+        return 'decline';
+    } else if (consent !== 'yes' && consent !== 'y') {
+        console.log('🚫 Invalid response. Cancelling elicitation.');
+        return 'cancel';
+    }
 
-  // 3. Wait for completion notification in the background
-  const completionPromise = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingURLElicitations.delete(elicitationId);
-      console.log(`\x1b[31m❌ Elicitation ${elicitationId} timed out waiting for completion.\x1b[0m`);
-      reject(new Error('Elicitation completion timeout'));
-    }, 5 * 60 * 1000); // 5 minute timeout
+    // 3. Wait for completion notification in the background
+    const completionPromise = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+            () => {
+                pendingURLElicitations.delete(elicitationId);
+                console.log(`\x1b[31m❌ Elicitation ${elicitationId} timed out waiting for completion.\x1b[0m`);
+                reject(new Error('Elicitation completion timeout'));
+            },
+            5 * 60 * 1000
+        ); // 5 minute timeout
 
-    pendingURLElicitations.set(elicitationId, {
-      resolve: () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      reject,
-      timeout,
+        pendingURLElicitations.set(elicitationId, {
+            resolve: () => {
+                clearTimeout(timeout);
+                resolve();
+            },
+            reject,
+            timeout
+        });
     });
-  });
 
-  completionPromise.catch(error => {
-    console.error('Background completion wait failed:', error);
-  });
+    completionPromise.catch(error => {
+        console.error('Background completion wait failed:', error);
+    });
 
-  // 4. Open the URL in the browser
-  console.log(`\n🚀 Opening browser to: ${url}`);
-  await openBrowser(url);
+    // 4. Open the URL in the browser
+    console.log(`\n🚀 Opening browser to: ${url}`);
+    await openBrowser(url);
 
-  console.log('\n⏳ Waiting for you to complete the interaction in your browser...');
-  console.log('   The server will send a notification once you complete the action.');
+    console.log('\n⏳ Waiting for you to complete the interaction in your browser...');
+    console.log('   The server will send a notification once you complete the action.');
 
-  // 5. Acknowledge the user accepted the elicitation
-  return 'accept';
+    // 5. Acknowledge the user accepted the elicitation
+    return 'accept';
 }
 
 /**
@@ -463,24 +457,24 @@ async function handleURLElicitation(params: ElicitRequestURLParams): Promise<Eli
  * Starts a temporary HTTP server to receive the OAuth callback
  */
 async function waitForOAuthCallback(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const server = createServer((req, res) => {
-      // Ignore favicon requests
-      if (req.url === '/favicon.ico') {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
+    return new Promise<string>((resolve, reject) => {
+        const server = createServer((req, res) => {
+            // Ignore favicon requests
+            if (req.url === '/favicon.ico') {
+                res.writeHead(404);
+                res.end();
+                return;
+            }
 
-      console.log(`📥 Received callback: ${req.url}`);
-      const parsedUrl = new URL(req.url || '', 'http://localhost');
-      const code = parsedUrl.searchParams.get('code');
-      const error = parsedUrl.searchParams.get('error');
+            console.log(`📥 Received callback: ${req.url}`);
+            const parsedUrl = new URL(req.url || '', 'http://localhost');
+            const code = parsedUrl.searchParams.get('code');
+            const error = parsedUrl.searchParams.get('error');
 
-      if (code) {
-        console.log(`✅ Authorization code received: ${code?.substring(0, 10)}...`);
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`
+            if (code) {
+                console.log(`✅ Authorization code received: ${code?.substring(0, 10)}...`);
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(`
           <html>
             <body>
               <h1>Authorization Successful!</h1>
@@ -491,12 +485,12 @@ async function waitForOAuthCallback(): Promise<string> {
           </html>
         `);
 
-        resolve(code);
-        setTimeout(() => server.close(), 15000);
-      } else if (error) {
-        console.log(`❌ Authorization error: ${error}`);
-        res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end(`
+                resolve(code);
+                setTimeout(() => server.close(), 15000);
+            } else if (error) {
+                console.log(`❌ Authorization error: ${error}`);
+                res.writeHead(400, { 'Content-Type': 'text/html' });
+                res.end(`
           <html>
             <body>
               <h1>Authorization Failed</h1>
@@ -504,329 +498,327 @@ async function waitForOAuthCallback(): Promise<string> {
             </body>
           </html>
         `);
-        reject(new Error(`OAuth authorization failed: ${error}`));
-      } else {
-        console.log(`❌ No authorization code or error in callback`);
-        res.writeHead(400);
-        res.end('Bad request');
-        reject(new Error('No authorization code provided'));
-      }
-    });
+                reject(new Error(`OAuth authorization failed: ${error}`));
+            } else {
+                console.log(`❌ No authorization code or error in callback`);
+                res.writeHead(400);
+                res.end('Bad request');
+                reject(new Error('No authorization code provided'));
+            }
+        });
 
-    server.listen(OAUTH_CALLBACK_PORT, () => {
-      console.log(`OAuth callback server started on http://localhost:${OAUTH_CALLBACK_PORT}`);
+        server.listen(OAUTH_CALLBACK_PORT, () => {
+            console.log(`OAuth callback server started on http://localhost:${OAUTH_CALLBACK_PORT}`);
+        });
     });
-  });
 }
 
 async function connect(url?: string): Promise<void> {
-  if (client) {
-    console.log('Already connected. Disconnect first.');
-    return;
-  }
-
-  if (url) {
-    serverUrl = url;
-  }
-
-  // Create a new client with elicitation capability
-  client = new Client({
-    name: 'example-client',
-    version: '1.0.0'
-  }, {
-    capabilities: {
-      elicitation: {
-        // Only URL elicitation is supported in this demo
-        // (see server/elicitationExample.ts for a demo of form mode elicitation)
-        url: {}
-      },
-    },
-  });
-  if (!transport) { // Only create a new transport if one doesn't exist
-    transport = new StreamableHTTPClientTransport(
-      new URL(serverUrl),
-      {
-        sessionId: sessionId,
-        authProvider: oauthProvider,
-        requestInit: {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            ...cliHeaders,
-          }
-        }
-      }
-    );
-  }
-
-  // Set up elicitation request handler with proper validation
-  client.setRequestHandler(ElicitRequestSchema, elicitationRequestHandler);
-
-  // Set up notification handler for elicitation completion
-  client.setNotificationHandler(ElicitationCompleteNotificationSchema, (notification) => {
-    const { elicitationId } = notification.params;
-    const pending = pendingURLElicitations.get(elicitationId);
-    if (pending) {
-      clearTimeout(pending.timeout);
-      pendingURLElicitations.delete(elicitationId);
-      console.log(`\x1b[32m✅ Elicitation ${elicitationId} completed!\x1b[0m`);
-      pending.resolve();
-    } else {
-      // Shouldn't happen - discard it!
-      console.warn(`Received completion notification for unknown elicitation: ${elicitationId}`);
+    if (client) {
+        console.log('Already connected. Disconnect first.');
+        return;
     }
-  });
 
-  try {
-    console.log(`Connecting to ${serverUrl}...`);
-    // Connect the client
-    await client.connect(transport);
-    sessionId = transport.sessionId
-    console.log('Transport created with session ID:', sessionId);
-    console.log('Connected to MCP server');
-  } catch (error) {
-    if (error instanceof UnauthorizedError) {
-      console.log('OAuth required - waiting for authorization...');
-      const callbackPromise = waitForOAuthCallback();
-      const authCode = await callbackPromise;
-      await transport.finishAuth(authCode);
-      console.log('🔐 Authorization code received:', authCode);
-      console.log('🔌 Reconnecting with authenticated transport...');
-      transport = new StreamableHTTPClientTransport(
-        new URL(serverUrl),
+    if (url) {
+        serverUrl = url;
+    }
+
+    // Create a new client with elicitation capability
+    client = new Client(
         {
-          sessionId: sessionId,
-          authProvider: oauthProvider,
-          requestInit: {
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json, text/event-stream',
-              ...cliHeaders,
+            name: 'example-client',
+            version: '1.0.0'
+        },
+        {
+            capabilities: {
+                elicitation: {
+                    // Only URL elicitation is supported in this demo
+                    // (see server/elicitationExample.ts for a demo of form mode elicitation)
+                    url: {}
+                }
             }
-          }
         }
-      );
-      await client.connect(transport);
-    } else {
-      console.error('Failed to connect:', error);
-      client = null;
-      transport = null;
-      return;
+    );
+    if (!transport) {
+        // Only create a new transport if one doesn't exist
+        transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
+            sessionId: sessionId,
+            authProvider: oauthProvider,
+            requestInit: {
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json, text/event-stream',
+                    ...cliHeaders
+                }
+            }
+        });
     }
-  }
-  // Set up error handler after connection is established so we don't double log errors
-  client.onerror = (error) => {
-    console.error('\x1b[31mClient error:', error, '\x1b[0m');
-  }
+
+    // Set up elicitation request handler with proper validation
+    client.setRequestHandler(ElicitRequestSchema, elicitationRequestHandler);
+
+    // Set up notification handler for elicitation completion
+    client.setNotificationHandler(ElicitationCompleteNotificationSchema, notification => {
+        const { elicitationId } = notification.params;
+        const pending = pendingURLElicitations.get(elicitationId);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            pendingURLElicitations.delete(elicitationId);
+            console.log(`\x1b[32m✅ Elicitation ${elicitationId} completed!\x1b[0m`);
+            pending.resolve();
+        } else {
+            // Shouldn't happen - discard it!
+            console.warn(`Received completion notification for unknown elicitation: ${elicitationId}`);
+        }
+    });
+
+    try {
+        console.log(`Connecting to ${serverUrl}...`);
+        // Connect the client
+        await client.connect(transport);
+        sessionId = transport.sessionId;
+        console.log('Transport created with session ID:', sessionId);
+        console.log('Connected to MCP server');
+    } catch (error) {
+        if (error instanceof UnauthorizedError) {
+            console.log('OAuth required - waiting for authorization...');
+            const callbackPromise = waitForOAuthCallback();
+            const authCode = await callbackPromise;
+            await transport.finishAuth(authCode);
+            console.log('🔐 Authorization code received:', authCode);
+            console.log('🔌 Reconnecting with authenticated transport...');
+            transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
+                sessionId: sessionId,
+                authProvider: oauthProvider,
+                requestInit: {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json, text/event-stream',
+                        ...cliHeaders
+                    }
+                }
+            });
+            await client.connect(transport);
+        } else {
+            console.error('Failed to connect:', error);
+            client = null;
+            transport = null;
+            return;
+        }
+    }
+    // Set up error handler after connection is established so we don't double log errors
+    client.onerror = error => {
+        console.error('\x1b[31mClient error:', error, '\x1b[0m');
+    };
 }
 
 async function disconnect(): Promise<void> {
-  if (!client || !transport) {
-    console.log('Not connected.');
-    return;
-  }
+    if (!client || !transport) {
+        console.log('Not connected.');
+        return;
+    }
 
-  try {
-    await transport.close();
-    console.log('Disconnected from MCP server');
-    client = null;
-    transport = null;
-  } catch (error) {
-    console.error('Error disconnecting:', error);
-  }
+    try {
+        await transport.close();
+        console.log('Disconnected from MCP server');
+        client = null;
+        transport = null;
+    } catch (error) {
+        console.error('Error disconnecting:', error);
+    }
 }
 
 async function terminateSession(): Promise<void> {
-  if (!client || !transport) {
-    console.log('Not connected.');
-    return;
-  }
-
-  try {
-    console.log('Terminating session with ID:', transport.sessionId);
-    await transport.terminateSession();
-    console.log('Session terminated successfully');
-
-    // Check if sessionId was cleared after termination
-    if (!transport.sessionId) {
-      console.log('Session ID has been cleared');
-      sessionId = undefined;
-
-      // Also close the transport and clear client objects
-      await transport.close();
-      console.log('Transport closed after session termination');
-      client = null;
-      transport = null;
-    } else {
-      console.log('Server responded with 405 Method Not Allowed (session termination not supported)');
-      console.log('Session ID is still active:', transport.sessionId);
+    if (!client || !transport) {
+        console.log('Not connected.');
+        return;
     }
-  } catch (error) {
-    console.error('Error terminating session:', error);
-  }
+
+    try {
+        console.log('Terminating session with ID:', transport.sessionId);
+        await transport.terminateSession();
+        console.log('Session terminated successfully');
+
+        // Check if sessionId was cleared after termination
+        if (!transport.sessionId) {
+            console.log('Session ID has been cleared');
+            sessionId = undefined;
+
+            // Also close the transport and clear client objects
+            await transport.close();
+            console.log('Transport closed after session termination');
+            client = null;
+            transport = null;
+        } else {
+            console.log('Server responded with 405 Method Not Allowed (session termination not supported)');
+            console.log('Session ID is still active:', transport.sessionId);
+        }
+    } catch (error) {
+        console.error('Error terminating session:', error);
+    }
 }
 
 async function reconnect(): Promise<void> {
-  if (client) {
-    await disconnect();
-  }
-  await connect();
+    if (client) {
+        await disconnect();
+    }
+    await connect();
 }
 
 async function listTools(): Promise<void> {
-  if (!client) {
-    console.log('Not connected to server.');
-    return;
-  }
-
-  try {
-    const toolsRequest: ListToolsRequest = {
-      method: 'tools/list',
-      params: {}
-    };
-    const toolsResult = await client.request(toolsRequest, ListToolsResultSchema);
-
-    console.log('Available tools:');
-    if (toolsResult.tools.length === 0) {
-      console.log('  No tools available');
-    } else {
-      for (const tool of toolsResult.tools) {
-        console.log(`  - id: ${tool.name}, name: ${getDisplayName(tool)}, description: ${tool.description}`);
-      }
+    if (!client) {
+        console.log('Not connected to server.');
+        return;
     }
-  } catch (error) {
-    console.log(`Tools not supported by this server (${error})`);
-  }
+
+    try {
+        const toolsRequest: ListToolsRequest = {
+            method: 'tools/list',
+            params: {}
+        };
+        const toolsResult = await client.request(toolsRequest, ListToolsResultSchema);
+
+        console.log('Available tools:');
+        if (toolsResult.tools.length === 0) {
+            console.log('  No tools available');
+        } else {
+            for (const tool of toolsResult.tools) {
+                console.log(`  - id: ${tool.name}, name: ${getDisplayName(tool)}, description: ${tool.description}`);
+            }
+        }
+    } catch (error) {
+        console.log(`Tools not supported by this server (${error})`);
+    }
 }
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<void> {
-  if (!client) {
-    console.log('Not connected to server.');
-    return;
-  }
-
-  try {
-    const request: CallToolRequest = {
-      method: 'tools/call',
-      params: {
-        name,
-        arguments: args
-      }
-    };
-
-    console.log(`Calling tool '${name}' with args:`, args);
-    const result = await client.request(request, CallToolResultSchema);
-
-    console.log('Tool result:');
-    const resourceLinks: ResourceLink[] = [];
-
-    result.content.forEach(item => {
-      if (item.type === 'text') {
-        console.log(`  ${item.text}`);
-      } else if (item.type === 'resource_link') {
-        const resourceLink = item as ResourceLink;
-        resourceLinks.push(resourceLink);
-        console.log(`  📁 Resource Link: ${resourceLink.name}`);
-        console.log(`     URI: ${resourceLink.uri}`);
-        if (resourceLink.mimeType) {
-          console.log(`     Type: ${resourceLink.mimeType}`);
-        }
-        if (resourceLink.description) {
-          console.log(`     Description: ${resourceLink.description}`);
-        }
-      } else if (item.type === 'resource') {
-        console.log(`  [Embedded Resource: ${item.resource.uri}]`);
-      } else if (item.type === 'image') {
-        console.log(`  [Image: ${item.mimeType}]`);
-      } else if (item.type === 'audio') {
-        console.log(`  [Audio: ${item.mimeType}]`);
-      } else {
-        console.log(`  [Unknown content type]:`, item);
-      }
-    });
-
-    // Offer to read resource links
-    if (resourceLinks.length > 0) {
-      console.log(`\nFound ${resourceLinks.length} resource link(s). Use 'read-resource <uri>' to read their content.`);
+    if (!client) {
+        console.log('Not connected to server.');
+        return;
     }
-  } catch (error) {
-    if (error instanceof ElicitationRequiredError) {
-      console.log('\n🔔 Elicitation Required Error Received:');
-      console.log(`Message: ${error.message}`);
-      for (const e of error.elicitations) {
-        await handleURLElicitation(e); // For the error handler, we discard the action result because we don't respond to an error response
-      }
-      return;
+
+    try {
+        const request: CallToolRequest = {
+            method: 'tools/call',
+            params: {
+                name,
+                arguments: args
+            }
+        };
+
+        console.log(`Calling tool '${name}' with args:`, args);
+        const result = await client.request(request, CallToolResultSchema);
+
+        console.log('Tool result:');
+        const resourceLinks: ResourceLink[] = [];
+
+        result.content.forEach(item => {
+            if (item.type === 'text') {
+                console.log(`  ${item.text}`);
+            } else if (item.type === 'resource_link') {
+                const resourceLink = item as ResourceLink;
+                resourceLinks.push(resourceLink);
+                console.log(`  📁 Resource Link: ${resourceLink.name}`);
+                console.log(`     URI: ${resourceLink.uri}`);
+                if (resourceLink.mimeType) {
+                    console.log(`     Type: ${resourceLink.mimeType}`);
+                }
+                if (resourceLink.description) {
+                    console.log(`     Description: ${resourceLink.description}`);
+                }
+            } else if (item.type === 'resource') {
+                console.log(`  [Embedded Resource: ${item.resource.uri}]`);
+            } else if (item.type === 'image') {
+                console.log(`  [Image: ${item.mimeType}]`);
+            } else if (item.type === 'audio') {
+                console.log(`  [Audio: ${item.mimeType}]`);
+            } else {
+                console.log(`  [Unknown content type]:`, item);
+            }
+        });
+
+        // Offer to read resource links
+        if (resourceLinks.length > 0) {
+            console.log(`\nFound ${resourceLinks.length} resource link(s). Use 'read-resource <uri>' to read their content.`);
+        }
+    } catch (error) {
+        if (error instanceof ElicitationRequiredError) {
+            console.log('\n🔔 Elicitation Required Error Received:');
+            console.log(`Message: ${error.message}`);
+            for (const e of error.elicitations) {
+                await handleURLElicitation(e); // For the error handler, we discard the action result because we don't respond to an error response
+            }
+            return;
+        }
+        console.log(`Error calling tool ${name}: ${error}`);
     }
-    console.log(`Error calling tool ${name}: ${error}`);
-  }
 }
 
 async function cleanup(): Promise<void> {
-  if (client && transport) {
-    try {
-      // First try to terminate the session gracefully
-      if (transport.sessionId) {
+    if (client && transport) {
         try {
-          console.log('Terminating session before exit...');
-          await transport.terminateSession();
-          console.log('Session terminated successfully');
+            // First try to terminate the session gracefully
+            if (transport.sessionId) {
+                try {
+                    console.log('Terminating session before exit...');
+                    await transport.terminateSession();
+                    console.log('Session terminated successfully');
+                } catch (error) {
+                    console.error('Error terminating session:', error);
+                }
+            }
+
+            // Then close the transport
+            await transport.close();
         } catch (error) {
-          console.error('Error terminating session:', error);
+            console.error('Error closing transport:', error);
         }
-      }
-
-      // Then close the transport
-      await transport.close();
-    } catch (error) {
-      console.error('Error closing transport:', error);
     }
-  }
 
-  process.stdin.setRawMode(false);
-  readline.close();
-  console.log('\nGoodbye!');
-  process.exit(0);
+    process.stdin.setRawMode(false);
+    readline.close();
+    console.log('\nGoodbye!');
+    process.exit(0);
 }
 
 async function callPaymentConfirmTool(): Promise<void> {
-  console.log('Calling payment-confirm tool...');
-  await callTool('payment-confirm', { cartId: "cart_123" });
+    console.log('Calling payment-confirm tool...');
+    await callTool('payment-confirm', { cartId: 'cart_123' });
 }
 
 async function callThirdPartyAuthTool(): Promise<void> {
-  console.log('Calling third-party-auth tool...');
-  await callTool('third-party-auth', { param1: 'test' });
+    console.log('Calling third-party-auth tool...');
+    await callTool('third-party-auth', { param1: 'test' });
 }
 
 // Set up raw mode for keyboard input to capture Escape key
 process.stdin.setRawMode(true);
-process.stdin.on('data', async (data) => {
-  // Check for Escape key (27)
-  if (data.length === 1 && data[0] === 27) {
-    console.log('\nESC key pressed. Disconnecting from server...');
+process.stdin.on('data', async data => {
+    // Check for Escape key (27)
+    if (data.length === 1 && data[0] === 27) {
+        console.log('\nESC key pressed. Disconnecting from server...');
 
-    // Abort current operation and disconnect from server
-    if (client && transport) {
-      await disconnect();
-      console.log('Disconnected. Press Enter to continue.');
-    } else {
-      console.log('Not connected to server.');
+        // Abort current operation and disconnect from server
+        if (client && transport) {
+            await disconnect();
+            console.log('Disconnected. Press Enter to continue.');
+        } else {
+            console.log('Not connected to server.');
+        }
+
+        // Re-display the prompt
+        process.stdout.write('> ');
     }
-
-    // Re-display the prompt
-    process.stdout.write('> ');
-  }
 });
 
 // Handle Ctrl+C
 process.on('SIGINT', async () => {
-  console.log('\nReceived SIGINT. Cleaning up...');
-  await cleanup();
+    console.log('\nReceived SIGINT. Cleaning up...');
+    await cleanup();
 });
 
 // Start the interactive client
 main().catch((error: unknown) => {
-  console.error('Error running MCP client:', error);
-  process.exit(1);
+    console.error('Error running MCP client:', error);
+    process.exit(1);
 });

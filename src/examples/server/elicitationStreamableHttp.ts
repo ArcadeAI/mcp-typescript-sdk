@@ -6,15 +6,12 @@ import { StreamableHTTPServerTransport } from '../../server/streamableHttp.js';
 import { getOAuthProtectedResourceMetadataUrl, mcpAuthMetadataRouter } from '../../server/auth/router.js';
 import { requireBearerAuth } from '../../server/auth/middleware/bearerAuth.js';
 import {
-  CallToolResult,
-  ElicitationRequiredError,
-  ElicitRequestURLParams,
-  ElicitResult,
-  ErrorCode,
-  isInitializeRequest,
-  McpError,
-  PrimitiveSchemaDefinition,
-  ElicitationCompleteNotification,
+    CallToolResult,
+    ElicitationRequiredError,
+    ElicitRequestURLParams,
+    ElicitResult,
+    isInitializeRequest,
+    ElicitationCompleteNotification
 } from '../../types.js';
 import { InMemoryEventStore } from '../shared/inMemoryEventStore.js';
 import { setupAuthServer } from './demoInMemoryOAuthProvider.js';
@@ -25,97 +22,90 @@ import cors from 'cors';
 
 // Create an MCP server with implementation details
 const getServer = () => {
-  const server = new McpServer({
-    name: 'simple-streamable-http-server',
-    version: '1.0.0',
-  }, {
-    capabilities: { logging: {} },
-  });
+    const server = new McpServer(
+        {
+            name: 'simple-streamable-http-server',
+            version: '1.0.0'
+        },
+        {
+            capabilities: { logging: {} }
+        }
+    );
 
-  server.tool(
-    'payment-confirm',
-    'A tool that confirms a payment directly with a user',  // description
-    {
-      cartId: z.string().describe('The ID of the cart to confirm'),
-    },
-    async ({ cartId }, extra): Promise<CallToolResult> => {
-      /*
+    server.tool(
+        'payment-confirm',
+        'A tool that confirms a payment directly with a user', // description
+        {
+            cartId: z.string().describe('The ID of the cart to confirm')
+        },
+        async ({ cartId }, extra): Promise<CallToolResult> => {
+            /*
         In a real world scenario, there would be some logic here to check if the user has the provided cartId.
         For the purposes of this example, we'll throw an error (-> elicits the client to open a URL to confirm payment)
       */
-      const sessionId = extra.sessionId;
-      if (!sessionId) {
-        throw new Error('Expected a Session ID');
-      }
+            const sessionId = extra.sessionId;
+            if (!sessionId) {
+                throw new Error('Expected a Session ID');
+            }
 
-      // Create and track the elicitation
-      const elicitationId = generateTrackedElicitation(
-        sessionId,
-        async (notification: ElicitationCompleteNotification) => {
-          await server.server.notification(notification);
+            // Create and track the elicitation
+            const elicitationId = generateTrackedElicitation(sessionId, async (notification: ElicitationCompleteNotification) => {
+                await server.server.notification(notification);
+            });
+            throw new ElicitationRequiredError([
+                {
+                    mode: 'url',
+                    message: 'This tool requires a payment confirmation. Open the link to confirm payment!',
+                    url: `http://localhost:${MCP_PORT}/confirm-payment?session=${sessionId}&elicitation=${elicitationId}&cartId=${encodeURIComponent(cartId)}`,
+                    elicitationId
+                }
+            ]);
         }
-      );
-      throw new ElicitationRequiredError(
-        [
-          {
-            mode: 'url',
-            message: 'This tool requires a payment confirmation. Open the link to confirm payment!',
-            url: `http://localhost:${MCP_PORT}/confirm-payment?session=${sessionId}&elicitation=${elicitationId}&cartId=${encodeURIComponent(cartId)}`,
-            elicitationId,
-          }
-        ]
-      )
-    }
-  );
+    );
 
-  server.tool(
-    'third-party-auth',
-    'A demo tool that requires third-party OAuth credentials',  // description
-    {
-      param1: z.string().describe('First parameter'),
-    },
-    async (args, extra): Promise<CallToolResult> => {
-      /*
+    server.tool(
+        'third-party-auth',
+        'A demo tool that requires third-party OAuth credentials', // description
+        {
+            param1: z.string().describe('First parameter')
+        },
+        async (args, extra): Promise<CallToolResult> => {
+            /*
         In a real world scenario, there would be some logic here to check if we already have a valid access token for the user.
         Auth info (with a subject or `sub` claim) can be typically be found in `extra.authInfo`.
         If we do, we can just return the result of the tool call.
         If we don't, we can throw an ElicitationRequiredError to request the user to authenticate.
         For the purposes of this example, we'll throw an error (-> elicits the client to open a URL to authenticate).
       */
-      const sessionId = extra.sessionId;
-      if (!sessionId) {
-        throw new Error('Expected a Session ID');
-      }
+            const sessionId = extra.sessionId;
+            if (!sessionId) {
+                throw new Error('Expected a Session ID');
+            }
 
-      // Create and track the elicitation
-      const elicitationId = generateTrackedElicitation(
-        sessionId,
-        async (notification: ElicitationCompleteNotification) => {
-          await server.server.notification(notification);
+            // Create and track the elicitation
+            const elicitationId = generateTrackedElicitation(sessionId, async (notification: ElicitationCompleteNotification) => {
+                await server.server.notification(notification);
+            });
+
+            // Simulate OAuth callback and token exchange after 5 seconds
+            // In a real app, this would be called from your OAuth callback handler
+            setTimeout(() => {
+                console.log(`Simulating OAuth token received for elicitation ${elicitationId}`);
+                completeURLElicitation(elicitationId);
+            }, 5000);
+
+            throw new ElicitationRequiredError([
+                {
+                    mode: 'url',
+                    message: 'This tool requires access to your example.com account. Open the link to authenticate!',
+                    url: 'https://www.example.com/oauth/authorize',
+                    elicitationId
+                }
+            ]);
         }
-      );
+    );
 
-      // Simulate OAuth callback and token exchange after 5 seconds
-      // In a real app, this would be called from your OAuth callback handler
-      setTimeout(() => {
-        console.log(`Simulating OAuth token received for elicitation ${elicitationId}`);
-        completeURLElicitation(elicitationId);
-      }, 5000);
-
-      throw new ElicitationRequiredError(
-        [
-          {
-            mode: 'url',
-            message: 'This tool requires access to your example.com account. Open the link to authenticate!',
-            url: 'https://www.example.com/oauth/authorize',
-            elicitationId,
-          }
-        ]
-      )
-    }
-  );
-
-  return server;
+    return server;
 };
 
 /**
@@ -123,12 +113,12 @@ const getServer = () => {
  **/
 
 interface ElicitationMetadata {
-  status: 'pending' | 'complete';
-  completedPromise: Promise<void>;
-  completeResolver: () => void;
-  createdAt: Date;
-  sessionId: string;
-  notificationSender?: (notification: ElicitationCompleteNotification) => Promise<void>;
+    status: 'pending' | 'complete';
+    completedPromise: Promise<void>;
+    completeResolver: () => void;
+    createdAt: Date;
+    sessionId: string;
+    notificationSender?: (notification: ElicitationCompleteNotification) => Promise<void>;
 }
 
 const elicitationsMap = new Map<string, ElicitationMetadata>();
@@ -138,13 +128,13 @@ const ELICITATION_TTL_MS = 60 * 60 * 1000; // 1 hour
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 function cleanupOldElicitations() {
-  const now = new Date();
-  for (const [id, metadata] of elicitationsMap.entries()) {
-    if (now.getTime() - metadata.createdAt.getTime() > ELICITATION_TTL_MS) {
-      elicitationsMap.delete(id);
-      console.log(`Cleaned up expired elicitation: ${id}`);
+    const now = new Date();
+    for (const [id, metadata] of elicitationsMap.entries()) {
+        if (now.getTime() - metadata.createdAt.getTime() > ELICITATION_TTL_MS) {
+            elicitationsMap.delete(id);
+            console.log(`Cleaned up expired elicitation: ${id}`);
+        }
     }
-  }
 }
 
 setInterval(cleanupOldElicitations, CLEANUP_INTERVAL_MS);
@@ -154,71 +144,73 @@ setInterval(cleanupOldElicitations, CLEANUP_INTERVAL_MS);
  * UUIDs are used in this example for simplicity
  */
 function generateElicitationId(): string {
-  return randomUUID();
+    return randomUUID();
 }
 
 /**
-* Helper function to create and track a new elicitation.
-*/
+ * Helper function to create and track a new elicitation.
+ */
 function generateTrackedElicitation(
-  sessionId: string,
-  notificationSender?: (notification: ElicitationCompleteNotification) => Promise<void>
+    sessionId: string,
+    notificationSender?: (notification: ElicitationCompleteNotification) => Promise<void>
 ): string {
-  const elicitationId = generateElicitationId();
+    const elicitationId = generateElicitationId();
 
-  // Create a Promise and its resolver for tracking completion
-  let completeResolver: () => void;
-  const completedPromise = new Promise<void>((resolve) => {
-    completeResolver = resolve;
-  });
+    // Create a Promise and its resolver for tracking completion
+    let completeResolver: () => void;
+    const completedPromise = new Promise<void>(resolve => {
+        completeResolver = resolve;
+    });
 
-  // Store the elicitation in our map
-  elicitationsMap.set(elicitationId, {
-    status: 'pending',
-    completedPromise,
-    completeResolver: completeResolver!,
-    createdAt: new Date(),
-    sessionId,
-    notificationSender,
-  });
+    // Store the elicitation in our map
+    elicitationsMap.set(elicitationId, {
+        status: 'pending',
+        completedPromise,
+        completeResolver: completeResolver!,
+        createdAt: new Date(),
+        sessionId,
+        notificationSender
+    });
 
-  return elicitationId;
+    return elicitationId;
 }
 
 /**
  * Helper function to complete an elicitation.
  */
 function completeURLElicitation(elicitationId: string) {
-  const elicitation = elicitationsMap.get(elicitationId);
-  if (!elicitation) {
-    console.warn(`Attempted to complete unknown elicitation: ${elicitationId}`);
-    return;
-  }
+    const elicitation = elicitationsMap.get(elicitationId);
+    if (!elicitation) {
+        console.warn(`Attempted to complete unknown elicitation: ${elicitationId}`);
+        return;
+    }
 
-  if (elicitation.status === 'complete') {
-    console.warn(`Elicitation already complete: ${elicitationId}`);
-    return;
-  }
+    if (elicitation.status === 'complete') {
+        console.warn(`Elicitation already complete: ${elicitationId}`);
+        return;
+    }
 
-  // Update metadata
-  elicitation.status = 'complete';
+    // Update metadata
+    elicitation.status = 'complete';
 
-  // Send completion notification to the client
-  if (elicitation.notificationSender) {
-    console.log(`Sending notifications/elicitation/complete notification for elicitation ${elicitationId}`);
+    // Send completion notification to the client
+    if (elicitation.notificationSender) {
+        console.log(`Sending notifications/elicitation/complete notification for elicitation ${elicitationId}`);
 
-    elicitation.notificationSender({
-      method: 'notifications/elicitation/complete',
-      params: {
-        elicitationId,
-      },
-    }).catch(error => {
-      console.error(`Failed to send completion notification for elicitation ${elicitationId}:`, error);
-    });
-  }
+        elicitation
+            .notificationSender({
+                method: 'notifications/elicitation/complete',
+                params: {
+                    elicitationId
+                }
+            })
+            .catch(error => {
+                console.error(`Failed to send completion notification for elicitation ${elicitationId}:`, error);
+            });
+    }
 
-  // Resolve the promise to unblock any waiting code
-  elicitation.completeResolver();
+    // Resolve the promise to unblock any waiting code
+    elicitation.completeResolver();
 }
 
 const MCP_PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT, 10) : 3000;
@@ -228,11 +220,13 @@ const app = express();
 app.use(express.json());
 
 // Allow CORS all domains, expose the Mcp-Session-Id header
-app.use(cors({
-  origin: '*', // Allow all origins
-  exposedHeaders: ["Mcp-Session-Id"],
-  credentials: true // Allow cookies to be sent cross-origin
-}));
+app.use(
+    cors({
+        origin: '*', // Allow all origins
+        exposedHeaders: ['Mcp-Session-Id'],
+        credentials: true // Allow cookies to be sent cross-origin
+    })
+);
 
 // Set up OAuth (required for this example)
 let authMiddleware = null;
@@ -243,60 +237,60 @@ const authServerUrl = new URL(`http://localhost:${AUTH_PORT}`);
 const oauthMetadata: OAuthMetadata = setupAuthServer({ authServerUrl, mcpServerUrl, strictResource: true });
 
 const tokenVerifier = {
-  verifyAccessToken: async (token: string) => {
-    const endpoint = oauthMetadata.introspection_endpoint;
+    verifyAccessToken: async (token: string) => {
+        const endpoint = oauthMetadata.introspection_endpoint;
 
-    if (!endpoint) {
-      throw new Error('No token verification endpoint available in metadata');
+        if (!endpoint) {
+            throw new Error('No token verification endpoint available in metadata');
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                token: token
+            }).toString()
+        });
+
+        if (!response.ok) {
+            throw new Error(`Invalid or expired token: ${await response.text()}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.aud) {
+            throw new Error(`Resource Indicator (RFC8707) missing`);
+        }
+        if (!checkResourceAllowed({ requestedResource: data.aud, configuredResource: mcpServerUrl })) {
+            throw new Error(`Expected resource indicator ${mcpServerUrl}, got: ${data.aud}`);
+        }
+
+        // Convert the response to AuthInfo format
+        return {
+            token,
+            clientId: data.client_id,
+            scopes: data.scope ? data.scope.split(' ') : [],
+            expiresAt: data.exp
+        };
     }
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        token: token
-      }).toString()
-    });
-
-
-    if (!response.ok) {
-      throw new Error(`Invalid or expired token: ${await response.text()}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.aud) {
-      throw new Error(`Resource Indicator (RFC8707) missing`);
-    }
-    if (!checkResourceAllowed({ requestedResource: data.aud, configuredResource: mcpServerUrl })) {
-      throw new Error(`Expected resource indicator ${mcpServerUrl}, got: ${data.aud}`);
-    }
-
-    // Convert the response to AuthInfo format
-    return {
-      token,
-      clientId: data.client_id,
-      scopes: data.scope ? data.scope.split(' ') : [],
-      expiresAt: data.exp,
-    };
-  }
-}
+};
 // Add metadata routes to the main MCP server
-app.use(mcpAuthMetadataRouter({
-  oauthMetadata,
-  resourceServerUrl: mcpServerUrl,
-  scopesSupported: ['mcp:tools'],
-  resourceName: 'MCP Demo Server',
-}));
+app.use(
+    mcpAuthMetadataRouter({
+        oauthMetadata,
+        resourceServerUrl: mcpServerUrl,
+        scopesSupported: ['mcp:tools'],
+        resourceName: 'MCP Demo Server'
+    })
+);
 
 authMiddleware = requireBearerAuth({
-  verifier: tokenVerifier,
-  requiredScopes: [],
-  resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpServerUrl),
+    verifier: tokenVerifier,
+    requiredScopes: [],
+    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpServerUrl)
 });
-
 
 /**
  * API Key Form Handling
@@ -305,66 +299,60 @@ authMiddleware = requireBearerAuth({
  * URL-mode elicitation enables the server to host a simple form and get the secret data securely from the user without involving the LLM or client.
  **/
 
-
-
-async function sendApiKeyElicitation(
-  sessionId: string,
-  sender: ElicitationSender,
-  notificationSender: ElicitationNotificationSender
-) {
-  if (!sessionId) {
-    console.error('No session ID provided');
-    throw new Error('Expected a Session ID to track elicitation');
-  }
-
-  console.log('🔑 URL elicitation demo: Requesting API key from client...');
-  const elicitationId = generateTrackedElicitation(sessionId, notificationSender);
-  try {
-    const result = await sender({
-      mode: 'url',
-      message: 'Please provide your API key to authenticate with this server',
-      // Host the form on the same server. In a real app, you might coordinate passing these state variables differently.
-      url: `http://localhost:${MCP_PORT}/api-key-form?session=${sessionId}&elicitation=${elicitationId}`,
-      elicitationId,
-    });
-
-    switch (result.action) {
-      case 'accept':
-        console.log('🔑 URL elicitation demo: Client accepted the API key elicitation (now pending form submission)');
-        // Wait for the API key to be submitted via the form
-        // The form submission will complete the elicitation
-        break;
-      default:
-        console.log('🔑 URL elicitation demo: Client declined to provide an API key');
-        // In a real app, this might close the connection, but for the demo, we'll continue
-        break;
+async function sendApiKeyElicitation(sessionId: string, sender: ElicitationSender, notificationSender: ElicitationNotificationSender) {
+    if (!sessionId) {
+        console.error('No session ID provided');
+        throw new Error('Expected a Session ID to track elicitation');
     }
-  } catch (error) {
-    console.error('Error during API key elicitation:', error);
-  }
+
+    console.log('🔑 URL elicitation demo: Requesting API key from client...');
+    const elicitationId = generateTrackedElicitation(sessionId, notificationSender);
+    try {
+        const result = await sender({
+            mode: 'url',
+            message: 'Please provide your API key to authenticate with this server',
+            // Host the form on the same server. In a real app, you might coordinate passing these state variables differently.
+            url: `http://localhost:${MCP_PORT}/api-key-form?session=${sessionId}&elicitation=${elicitationId}`,
+            elicitationId
+        });
+
+        switch (result.action) {
+            case 'accept':
+                console.log('🔑 URL elicitation demo: Client accepted the API key elicitation (now pending form submission)');
+                // Wait for the API key to be submitted via the form
+                // The form submission will complete the elicitation
+                break;
+            default:
+                console.log('🔑 URL elicitation demo: Client declined to provide an API key');
+                // In a real app, this might close the connection, but for the demo, we'll continue
+                break;
+        }
+    } catch (error) {
+        console.error('Error during API key elicitation:', error);
+    }
 }
 
 // API Key Form endpoint - serves a simple HTML form
 app.get('/api-key-form', (req: Request, res: Response) => {
-  const mcpSessionId = req.query.session as string | undefined;
-  const elicitationId = req.query.elicitation as string | undefined;
-  if (!mcpSessionId || !elicitationId) {
-    res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
-    return;
-  }
+    const mcpSessionId = req.query.session as string | undefined;
+    const elicitationId = req.query.elicitation as string | undefined;
+    if (!mcpSessionId || !elicitationId) {
+        res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
+        return;
+    }
 
-  // Check for user session cookie
-  // In production, this is often handled by some user auth middleware to ensure the user has a valid session
-  // This session is different from the MCP session.
-  // This userSession is the cookie that the MCP Server's Authorization Server sets for the user when they log in.
-  const userSession = getUserSessionCookie(req.headers.cookie);
-  if (!userSession) {
-    res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
-    return;
-  }
+    // Check for user session cookie
+    // In production, this is often handled by some user auth middleware to ensure the user has a valid session
+    // This session is different from the MCP session.
+    // This userSession is the cookie that the MCP Server's Authorization Server sets for the user when they log in.
+    const userSession = getUserSessionCookie(req.headers.cookie);
+    if (!userSession) {
+        res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
+        return;
+    }
 
-  // Serve a simple HTML form
-  res.send(`
+    // Serve a simple HTML form
+    res.send(`
     <!DOCTYPE html>
     <html>
     <head>
@@ -397,27 +385,27 @@ app.get('/api-key-form', (req: Request, res: Response) => {
 
 // Handle API key form submission
 app.post('/api-key-form', express.urlencoded(), (req: Request, res: Response) => {
-  const { session: sessionId, apiKey, elicitation: elicitationId } = req.body;
-  if (!sessionId || !apiKey || !elicitationId) {
-    res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
-    return;
-  }
+    const { session: sessionId, apiKey, elicitation: elicitationId } = req.body;
+    if (!sessionId || !apiKey || !elicitationId) {
+        res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
+        return;
+    }
 
-  // Check for user session cookie here too
-  const userSession = getUserSessionCookie(req.headers.cookie);
-  if (!userSession) {
-    res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
-    return;
-  }
+    // Check for user session cookie here too
+    const userSession = getUserSessionCookie(req.headers.cookie);
+    if (!userSession) {
+        res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
+        return;
+    }
 
-  // A real app might store this API key to be used later for the user.
-  console.log(`🔑 Received API key \x1b[32m${apiKey}\x1b[0m for session ${sessionId}`);
+    // A real app might store this API key to be used later for the user.
+    console.log(`🔑 Received API key \x1b[32m${apiKey}\x1b[0m for session ${sessionId}`);
 
-  // If we have an elicitationId, complete the elicitation
-  completeURLElicitation(elicitationId);
+    // If we have an elicitationId, complete the elicitation
+    completeURLElicitation(elicitationId);
 
-  // Send a success response
-  res.send(`
+    // Send a success response
+    res.send(`
     <!DOCTYPE html>
     <html>
     <head>
@@ -440,21 +428,21 @@ app.post('/api-key-form', express.urlencoded(), (req: Request, res: Response) =>
 
 // Helper to get the user session from the demo_session cookie
 function getUserSessionCookie(cookieHeader?: string): { userId: string; name: string; timestamp: number } | null {
-  if (!cookieHeader) return null;
+    if (!cookieHeader) return null;
 
-  const cookies = cookieHeader.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'demo_session' && value) {
-      try {
-        return JSON.parse(decodeURIComponent(value));
-      } catch (error) {
-        console.error('Failed to parse demo_session cookie:', error);
-        return null;
-      }
+    const cookies = cookieHeader.split(';');
+    for (const cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'demo_session' && value) {
+            try {
+                return JSON.parse(decodeURIComponent(value));
+            } catch (error) {
+                console.error('Failed to parse demo_session cookie:', error);
+                return null;
+            }
+        }
     }
-  }
-  return null;
+    return null;
 }
 
 /**
@@ -466,26 +454,26 @@ function getUserSessionCookie(cookieHeader?: string): { userId: string; name: st
 
 // Payment Confirmation Form endpoint - serves a simple HTML form
 app.get('/confirm-payment', (req: Request, res: Response) => {
-  const mcpSessionId = req.query.session as string | undefined;
-  const elicitationId = req.query.elicitation as string | undefined;
-  const cartId = req.query.cartId as string | undefined;
-  if (!mcpSessionId || !elicitationId) {
-    res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
-    return;
-  }
+    const mcpSessionId = req.query.session as string | undefined;
+    const elicitationId = req.query.elicitation as string | undefined;
+    const cartId = req.query.cartId as string | undefined;
+    if (!mcpSessionId || !elicitationId) {
+        res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
+        return;
+    }
 
-  // Check for user session cookie
-  // In production, this is often handled by some user auth middleware to ensure the user has a valid session
-  // This session is different from the MCP session.
-  // This userSession is the cookie that the MCP Server's Authorization Server sets for the user when they log in.
-  const userSession = getUserSessionCookie(req.headers.cookie);
-  if (!userSession) {
-    res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
-    return;
-  }
+    // Check for user session cookie
+    // In production, this is often handled by some user auth middleware to ensure the user has a valid session
+    // This session is different from the MCP session.
+    // This userSession is the cookie that the MCP Server's Authorization Server sets for the user when they log in.
+    const userSession = getUserSessionCookie(req.headers.cookie);
+    if (!userSession) {
+        res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
+        return;
+    }
 
-  // Serve a simple HTML form
-  res.send(`
+    // Serve a simple HTML form
+    res.send(`
     <!DOCTYPE html>
     <html>
     <head>
@@ -524,28 +512,28 @@ app.get('/confirm-payment', (req: Request, res: Response) => {
 
 // Handle Payment Confirmation form submission
 app.post('/confirm-payment', express.urlencoded(), (req: Request, res: Response) => {
-  const { session: sessionId, elicitation: elicitationId, cartId, action } = req.body;
-  if (!sessionId || !elicitationId) {
-    res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
-    return;
-  }
+    const { session: sessionId, elicitation: elicitationId, cartId, action } = req.body;
+    if (!sessionId || !elicitationId) {
+        res.status(400).send('<h1>Error</h1><p>Missing required parameters</p>');
+        return;
+    }
 
-  // Check for user session cookie here too
-  const userSession = getUserSessionCookie(req.headers.cookie);
-  if (!userSession) {
-    res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
-    return;
-  }
+    // Check for user session cookie here too
+    const userSession = getUserSessionCookie(req.headers.cookie);
+    if (!userSession) {
+        res.status(401).send('<h1>Error</h1><p>Unauthorized - please reconnect to login again</p>');
+        return;
+    }
 
-  if (action === 'confirm') {
-    // A real app would process the payment here
-    console.log(`💳 Payment confirmed for cart ${cartId || 'unknown'} by user ${userSession.name} (session ${sessionId})`);
+    if (action === 'confirm') {
+        // A real app would process the payment here
+        console.log(`💳 Payment confirmed for cart ${cartId || 'unknown'} by user ${userSession.name} (session ${sessionId})`);
 
-    // Complete the elicitation
-    completeURLElicitation(elicitationId);
+        // Complete the elicitation
+        completeURLElicitation(elicitationId);
 
-    // Send a success response
-    res.send(`
+        // Send a success response
+        res.send(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -565,14 +553,14 @@ app.post('/confirm-payment', express.urlencoded(), (req: Request, res: Response)
       </body>
       </html>
     `);
-  } else if (action === 'cancel') {
-    console.log(`💳 Payment cancelled for cart ${cartId || 'unknown'} by user ${userSession.name} (session ${sessionId})`);
+    } else if (action === 'cancel') {
+        console.log(`💳 Payment cancelled for cart ${cartId || 'unknown'} by user ${userSession.name} (session ${sessionId})`);
 
-    // The client will still receive a notifications/elicitation/complete notification,
-    // which indicates that the out-of-band interaction is complete (but not necessarily successful)
-    completeURLElicitation(elicitationId);
+        // The client will still receive a notifications/elicitation/complete notification,
+        // which indicates that the out-of-band interaction is complete (but not necessarily successful)
+        completeURLElicitation(elicitationId);
 
-    res.send(`
+        res.send(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -591,9 +579,9 @@ app.post('/confirm-payment', express.urlencoded(), (req: Request, res: Response)
       </body>
       </html>
     `);
-  } else {
-    res.status(400).send('<h1>Error</h1><p>Invalid action</p>');
-  }
+    } else {
+        res.status(400).send('<h1>Error</h1><p>Invalid action</p>');
+    }
 });
 
 // Map to store transports by session ID
@@ -605,87 +593,87 @@ type ElicitationNotificationSender = (notification: ElicitationCompleteNotificat
 
 // Track sessions that need an elicitation request to be sent
 interface SessionElicitationInfo {
-  elicitationSender: ElicitationSender;
-  notificationSender: ElicitationNotificationSender;
+    elicitationSender: ElicitationSender;
+    notificationSender: ElicitationNotificationSender;
 }
 const sessionsNeedingElicitation: { [sessionId: string]: SessionElicitationInfo } = {};
 
 // MCP POST endpoint
 const mcpPostHandler = async (req: Request, res: Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  console.debug(`Received MCP POST for session: ${sessionId || 'unknown'}`);
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    console.debug(`Received MCP POST for session: ${sessionId || 'unknown'}`);
 
-  try {
-    let transport: StreamableHTTPServerTransport;
-    if (sessionId && transports[sessionId]) {
-      // Reuse existing transport
-      transport = transports[sessionId];
-    } else if (!sessionId && isInitializeRequest(req.body)) {
-      const server = getServer();
-      // New initialization request
-      const eventStore = new InMemoryEventStore();
-      transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        eventStore, // Enable resumability
-        onsessioninitialized: (sessionId) => {
-          // Store the transport by session ID when session is initialized
-          // This avoids race conditions where requests might come in before the session is stored
-          console.log(`Session initialized with ID: ${sessionId}`);
-          transports[sessionId] = transport;
-          sessionsNeedingElicitation[sessionId] = {
-            elicitationSender: server.server.elicitInput.bind(server.server),
-            notificationSender: async (notification: ElicitationCompleteNotification) => {
-              await server.server.notification(notification);
-            },
-          };
-        },
-      });
+    try {
+        let transport: StreamableHTTPServerTransport;
+        if (sessionId && transports[sessionId]) {
+            // Reuse existing transport
+            transport = transports[sessionId];
+        } else if (!sessionId && isInitializeRequest(req.body)) {
+            const server = getServer();
+            // New initialization request
+            const eventStore = new InMemoryEventStore();
+            transport = new StreamableHTTPServerTransport({
+                sessionIdGenerator: () => randomUUID(),
+                eventStore, // Enable resumability
+                onsessioninitialized: sessionId => {
+                    // Store the transport by session ID when session is initialized
+                    // This avoids race conditions where requests might come in before the session is stored
+                    console.log(`Session initialized with ID: ${sessionId}`);
+                    transports[sessionId] = transport;
+                    sessionsNeedingElicitation[sessionId] = {
+                        elicitationSender: server.server.elicitInput.bind(server.server),
+                        notificationSender: async (notification: ElicitationCompleteNotification) => {
+                            await server.server.notification(notification);
+                        }
+                    };
+                }
+            });
 
-      // Set up onclose handler to clean up transport when closed
-      transport.onclose = () => {
-        const sid = transport.sessionId;
-        if (sid && transports[sid]) {
-          console.log(`Transport closed for session ${sid}, removing from transports map`);
-          delete transports[sid];
-          delete sessionsNeedingElicitation[sid];
+            // Set up onclose handler to clean up transport when closed
+            transport.onclose = () => {
+                const sid = transport.sessionId;
+                if (sid && transports[sid]) {
+                    console.log(`Transport closed for session ${sid}, removing from transports map`);
+                    delete transports[sid];
+                    delete sessionsNeedingElicitation[sid];
+                }
+            };
+
+            // Connect the transport to the MCP server BEFORE handling the request
+            // so responses can flow back through the same transport
+            await server.connect(transport);
+
+            await transport.handleRequest(req, res, req.body);
+            return; // Already handled
+        } else {
+            // Invalid request - no session ID or not initialization request
+            res.status(400).json({
+                jsonrpc: '2.0',
+                error: {
+                    code: -32000,
+                    message: 'Bad Request: No valid session ID provided'
+                },
+                id: null
+            });
+            return;
         }
-      };
 
-      // Connect the transport to the MCP server BEFORE handling the request
-      // so responses can flow back through the same transport
-      await server.connect(transport);
-
-      await transport.handleRequest(req, res, req.body);
-      return; // Already handled
-    } else {
-      // Invalid request - no session ID or not initialization request
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided',
-        },
-        id: null,
-      });
-      return;
+        // Handle the request with existing transport - no need to reconnect
+        // The existing transport is already connected to the server
+        await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+        console.error('Error handling MCP request:', error);
+        if (!res.headersSent) {
+            res.status(500).json({
+                jsonrpc: '2.0',
+                error: {
+                    code: -32603,
+                    message: 'Internal server error'
+                },
+                id: null
+            });
+        }
     }
-
-    // Handle the request with existing transport - no need to reconnect
-    // The existing transport is already connected to the server
-    await transport.handleRequest(req, res, req.body);
-  } catch (error) {
-    console.error('Error handling MCP request:', error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: 'Internal server error',
-        },
-        id: null,
-      });
-    }
-  }
 };
 
 // Set up routes with auth middleware
@@ -693,38 +681,38 @@ app.post('/mcp', authMiddleware, mcpPostHandler);
 
 // Handle GET requests for SSE streams (using built-in support from StreamableHTTP)
 const mcpGetHandler = async (req: Request, res: Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('Invalid or missing session ID');
-    return;
-  }
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !transports[sessionId]) {
+        res.status(400).send('Invalid or missing session ID');
+        return;
+    }
 
-  // Check for Last-Event-ID header for resumability
-  const lastEventId = req.headers['last-event-id'] as string | undefined;
-  if (lastEventId) {
-    console.log(`Client reconnecting with Last-Event-ID: ${lastEventId}`);
-  } else {
-    console.log(`Establishing new SSE stream for session ${sessionId}`);
-  }
+    // Check for Last-Event-ID header for resumability
+    const lastEventId = req.headers['last-event-id'] as string | undefined;
+    if (lastEventId) {
+        console.log(`Client reconnecting with Last-Event-ID: ${lastEventId}`);
+    } else {
+        console.log(`Establishing new SSE stream for session ${sessionId}`);
+    }
 
-  const transport = transports[sessionId];
-  await transport.handleRequest(req, res);
+    const transport = transports[sessionId];
+    await transport.handleRequest(req, res);
 
-  if (sessionsNeedingElicitation[sessionId]) {
-    const { elicitationSender, notificationSender } = sessionsNeedingElicitation[sessionId];
+    if (sessionsNeedingElicitation[sessionId]) {
+        const { elicitationSender, notificationSender } = sessionsNeedingElicitation[sessionId];
 
-    // Send an elicitation request to the client in the background
-    sendApiKeyElicitation(sessionId, elicitationSender, notificationSender)
-      .then(() => {
-        // Only delete on successful send for this demo
-        delete sessionsNeedingElicitation[sessionId];
-        console.log(`🔑 URL elicitation demo: Finished sending API key elicitation request for session ${sessionId}`);
-      })
-      .catch(error => {
-        console.error('Error sending API key elicitation:', error);
-        // Keep in map to potentially retry on next reconnect
-      });
-  }
+        // Send an elicitation request to the client in the background
+        sendApiKeyElicitation(sessionId, elicitationSender, notificationSender)
+            .then(() => {
+                // Only delete on successful send for this demo
+                delete sessionsNeedingElicitation[sessionId];
+                console.log(`🔑 URL elicitation demo: Finished sending API key elicitation request for session ${sessionId}`);
+            })
+            .catch(error => {
+                console.error('Error sending API key elicitation:', error);
+                // Keep in map to potentially retry on next reconnect
+            });
+    }
 };
 
 // Set up GET route with conditional auth middleware
@@ -732,51 +720,51 @@ app.get('/mcp', authMiddleware, mcpGetHandler);
 
 // Handle DELETE requests for session termination (according to MCP spec)
 const mcpDeleteHandler = async (req: Request, res: Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('Invalid or missing session ID');
-    return;
-  }
-
-  console.log(`Received session termination request for session ${sessionId}`);
-
-  try {
-    const transport = transports[sessionId];
-    await transport.handleRequest(req, res);
-  } catch (error) {
-    console.error('Error handling session termination:', error);
-    if (!res.headersSent) {
-      res.status(500).send('Error processing session termination');
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !transports[sessionId]) {
+        res.status(400).send('Invalid or missing session ID');
+        return;
     }
-  }
+
+    console.log(`Received session termination request for session ${sessionId}`);
+
+    try {
+        const transport = transports[sessionId];
+        await transport.handleRequest(req, res);
+    } catch (error) {
+        console.error('Error handling session termination:', error);
+        if (!res.headersSent) {
+            res.status(500).send('Error processing session termination');
+        }
+    }
 };
 
 // Set up DELETE route with auth middleware
 app.delete('/mcp', authMiddleware, mcpDeleteHandler);
 
-app.listen(MCP_PORT, (error) => {
-  if (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
-  console.log(`MCP Streamable HTTP Server listening on port ${MCP_PORT}`);
+app.listen(MCP_PORT, error => {
+    if (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+    console.log(`MCP Streamable HTTP Server listening on port ${MCP_PORT}`);
 });
 
 // Handle server shutdown
 process.on('SIGINT', async () => {
-  console.log('Shutting down server...');
+    console.log('Shutting down server...');
 
-  // Close all active transports to properly clean up resources
-  for (const sessionId in transports) {
-    try {
-      console.log(`Closing transport for session ${sessionId}`);
-      await transports[sessionId].close();
-      delete transports[sessionId];
-      delete sessionsNeedingElicitation[sessionId];
-    } catch (error) {
-      console.error(`Error closing transport for session ${sessionId}:`, error);
+    // Close all active transports to properly clean up resources
+    for (const sessionId in transports) {
+        try {
+            console.log(`Closing transport for session ${sessionId}`);
+            await transports[sessionId].close();
+            delete transports[sessionId];
+            delete sessionsNeedingElicitation[sessionId];
+        } catch (error) {
+            console.error(`Error closing transport for session ${sessionId}:`, error);
+        }
     }
-  }
-  console.log('Server shutdown complete');
-  process.exit(0);
+    console.log('Server shutdown complete');
+    process.exit(0);
 });

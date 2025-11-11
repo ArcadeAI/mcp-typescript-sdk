@@ -107,9 +107,9 @@ export class McpServer {
                             description: tool.description,
                             inputSchema: tool.inputSchema
                                 ? (zodToJsonSchema(tool.inputSchema, {
-                                    strictUnions: true,
-                                    pipeStrategy: 'input'
-                                }) as Tool['inputSchema'])
+                                      strictUnions: true,
+                                      pipeStrategy: 'input'
+                                  }) as Tool['inputSchema'])
                                 : EMPTY_OBJECT_JSON_SCHEMA,
                             annotations: tool.annotations,
                             _meta: tool._meta
@@ -1040,12 +1040,12 @@ export class ResourceTemplate {
  */
 export type ToolCallback<Args extends undefined | ZodRawShape | ZodType<object> = undefined> = Args extends ZodRawShape
     ? (
-        args: z.objectOutputType<Args, ZodTypeAny>,
-        extra: RequestHandlerExtra<ServerRequest, ServerNotification>
-    ) => CallToolResult | Promise<CallToolResult>
+          args: z.objectOutputType<Args, ZodTypeAny>,
+          extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+      ) => CallToolResult | Promise<CallToolResult>
     : Args extends ZodType<infer T>
-    ? (args: T, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => CallToolResult | Promise<CallToolResult>
-    : (extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => CallToolResult | Promise<CallToolResult>;
+      ? (args: T, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => CallToolResult | Promise<CallToolResult>
+      : (extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => CallToolResult | Promise<CallToolResult>;
 
 export type RegisteredTool = {
     title?: string;
@@ -1188,9 +1188,9 @@ type PromptArgsRawShape = {
 
 export type PromptCallback<Args extends undefined | PromptArgsRawShape = undefined> = Args extends PromptArgsRawShape
     ? (
-        args: z.objectOutputType<Args, ZodTypeAny>,
-        extra: RequestHandlerExtra<ServerRequest, ServerNotification>
-    ) => GetPromptResult | Promise<GetPromptResult>
+          args: z.objectOutputType<Args, ZodTypeAny>,
+          extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+      ) => GetPromptResult | Promise<GetPromptResult>
     : (extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => GetPromptResult | Promise<GetPromptResult>;
 
 export type RegisteredPrompt = {

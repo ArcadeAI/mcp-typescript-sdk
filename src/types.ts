@@ -140,7 +140,7 @@ export enum ErrorCode {
     InternalError = -32603,
 
     // MCP-specific error codes
-    UrlElicitationRequired = -32042,
+    UrlElicitationRequired = -32042
 }
 
 /**
@@ -274,25 +274,27 @@ export const ImplementationSchema = BaseMetadataSchema.extend({
     websiteUrl: z.string().optional()
 }).merge(IconsSchema);
 
-const ElicitationCapabilitySchema = z.preprocess(
-    (value) => {
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-            const hasForm = Object.prototype.hasOwnProperty.call(value, 'form');
-            const hasUrl = Object.prototype.hasOwnProperty.call(value, 'url');
-            if (!hasForm && !hasUrl) {
-                return { ...(value as Record<string, unknown>), form: {} };
+const ElicitationCapabilitySchema = z
+    .preprocess(
+        value => {
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const hasForm = Object.prototype.hasOwnProperty.call(value, 'form');
+                const hasUrl = Object.prototype.hasOwnProperty.call(value, 'url');
+                if (!hasForm && !hasUrl) {
+                    return { ...(value as Record<string, unknown>), form: {} };
+                }
             }
-        }
-        return value;
-    },
-    z
-        .object({
-            applyDefaults: z.boolean().optional(),
-            form: z.object({}).passthrough().optional(),
-            url: z.object({}).passthrough().optional()
-        })
-        .passthrough()
-).optional();
+            return value;
+        },
+        z
+            .object({
+                applyDefaults: z.boolean().optional(),
+                form: z.object({}).passthrough().optional(),
+                url: z.object({}).passthrough().optional()
+            })
+            .passthrough()
+    )
+    .optional();
 
 /**
  * Capabilities a client may support. Known capabilities are defined here, in this schema, but this is not a closed set: any client can define its own, additional capabilities.
@@ -1354,13 +1356,13 @@ export const ElicitRequestParamsSchema = BaseRequestParamsSchema.extend({
      * - "form": In-band structured data collection with optional schema validation
      * - "url": Out-of-band interaction via URL navigation
      */
-    mode: z.enum(["form", "url"]),
+    mode: z.enum(['form', 'url']),
     /**
      * The message to present to the user.
      * For form mode: Describes what information is being requested.
      * For url mode: Explains why the interaction is needed.
      */
-    message: z.string(),
+    message: z.string()
 });
 
 /**
@@ -1370,7 +1372,7 @@ export const ElicitRequestFormParamsSchema = ElicitRequestParamsSchema.extend({
     /**
      * The elicitation mode.
      */
-    mode: z.literal("form"),
+    mode: z.literal('form'),
     /**
      * A restricted subset of JSON Schema.
      * Only top-level properties are allowed, without nesting.
@@ -1389,7 +1391,7 @@ export const ElicitRequestURLParamsSchema = ElicitRequestParamsSchema.extend({
     /**
      * The elicitation mode.
      */
-    mode: z.literal("url"),
+    mode: z.literal('url'),
     /**
      * The ID of the elicitation, which must be unique within the context of the server.
      * The client MUST treat this ID as an opaque value.
@@ -1398,7 +1400,7 @@ export const ElicitRequestURLParamsSchema = ElicitRequestParamsSchema.extend({
     /**
      * The URL that the user should navigate to.
      */
-    url: z.string().url(),
+    url: z.string().url()
 });
 
 /**
@@ -1407,8 +1409,8 @@ export const ElicitRequestURLParamsSchema = ElicitRequestParamsSchema.extend({
  * or navigate to a URL (url mode).
  */
 export const ElicitRequestSchema = RequestSchema.extend({
-    method: z.literal("elicitation/create"),
-    params: z.union([ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema]),
+    method: z.literal('elicitation/create'),
+    params: z.union([ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema])
 });
 
 /**
@@ -1420,7 +1422,7 @@ export const ElicitationCompleteNotificationParamsSchema = NotificationsParamsSc
     /**
      * The ID of the elicitation that completed.
      */
-    elicitationId: z.string(),
+    elicitationId: z.string()
 });
 
 /**
@@ -1429,8 +1431,8 @@ export const ElicitationCompleteNotificationParamsSchema = NotificationsParamsSc
  * @category notifications/elicitation/complete
  */
 export const ElicitationCompleteNotificationSchema = NotificationSchema.extend({
-    method: z.literal("notifications/elicitation/complete"),
-    params: ElicitationCompleteNotificationParamsSchema,
+    method: z.literal('notifications/elicitation/complete'),
+    params: ElicitationCompleteNotificationParamsSchema
 });
 
 /**
@@ -1605,7 +1607,7 @@ export const ClientRequestSchema = z.union([
     SubscribeRequestSchema,
     UnsubscribeRequestSchema,
     CallToolRequestSchema,
-    ListToolsRequestSchema,
+    ListToolsRequestSchema
 ]);
 
 export const ClientNotificationSchema = z.union([
@@ -1641,17 +1643,17 @@ export const ServerResultSchema = z.union([
     ListResourceTemplatesResultSchema,
     ReadResourceResultSchema,
     CallToolResultSchema,
-    ListToolsResultSchema,
+    ListToolsResultSchema
 ]);
 
 export class McpError extends Error {
     constructor(
         public readonly code: number,
         message: string,
-        public readonly data?: unknown,
+        public readonly data?: unknown
     ) {
         super(`MCP error ${code}: ${message}`);
-        this.name = "McpError";
+        this.name = 'McpError';
     }
 
     /**
@@ -1662,10 +1664,7 @@ export class McpError extends Error {
         if (code === ErrorCode.UrlElicitationRequired && data) {
             const errorData = data as { elicitations?: unknown[] };
             if (errorData.elicitations) {
-                return new ElicitationRequiredError(
-                    errorData.elicitations as ElicitRequestURLParams[],
-                    message
-                );
+                return new ElicitationRequiredError(errorData.elicitations as ElicitRequestURLParams[], message);
             }
         }
 
@@ -1679,10 +1678,7 @@ export class McpError extends Error {
  * This makes it nicer for the client to handle since there is specific data to work with instead of just a code to check against.
  */
 export class ElicitationRequiredError extends McpError {
-    constructor(
-        elicitations: ElicitRequestURLParams[],
-        message: string = `Elicitation${elicitations.length > 1 ? 's' : ''} required`,
-    ) {
+    constructor(elicitations: ElicitRequestURLParams[], message: string = `Elicitation${elicitations.length > 1 ? 's' : ''} required`) {
         super(ErrorCode.UrlElicitationRequired, message, {
             elicitations: elicitations
         });
@@ -1697,14 +1693,14 @@ type Primitive = string | number | boolean | bigint | null | undefined;
 type Flatten<T> = T extends Primitive
     ? T
     : T extends Array<infer U>
-    ? Array<Flatten<U>>
-    : T extends Set<infer U>
-    ? Set<Flatten<U>>
-    : T extends Map<infer K, infer V>
-    ? Map<Flatten<K>, Flatten<V>>
-    : T extends object
-    ? { [K in keyof T]: Flatten<T[K]> }
-    : T;
+      ? Array<Flatten<U>>
+      : T extends Set<infer U>
+        ? Set<Flatten<U>>
+        : T extends Map<infer K, infer V>
+          ? Map<Flatten<K>, Flatten<V>>
+          : T extends object
+            ? { [K in keyof T]: Flatten<T[K]> }
+            : T;
 
 type Infer<Schema extends ZodTypeAny> = Flatten<z.infer<Schema>>;
 

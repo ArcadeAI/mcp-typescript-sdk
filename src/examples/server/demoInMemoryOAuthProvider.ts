@@ -40,7 +40,7 @@ export class DemoInMemoryAuthProvider implements OAuthServerProvider {
     >();
     private tokens = new Map<string, AuthInfo>();
 
-    constructor(private validateResource?: (resource?: URL) => boolean) { }
+    constructor(private validateResource?: (resource?: URL) => boolean) {}
 
     async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
         const code = randomUUID();
@@ -62,14 +62,14 @@ export class DemoInMemoryAuthProvider implements OAuthServerProvider {
         const authCookieData = {
             userId: 'demo_user',
             name: 'Demo User',
-            timestamp: Date.now(),
+            timestamp: Date.now()
         };
         res.cookie('demo_session', JSON.stringify(authCookieData), {
             httpOnly: true,
             secure: false, // In production, this should be true
             sameSite: 'lax',
             maxAge: 24 * 60 * 60 * 1000, // 24 hours - for demo purposes
-            path: '/', // Available to all routes
+            path: '/' // Available to all routes
         });
 
         if (!client.redirect_uris.includes(params.redirectUri)) {
@@ -174,10 +174,10 @@ export const setupAuthServer = ({
 
     const validateResource = strictResource
         ? (resource?: URL) => {
-            if (!resource) return false;
-            const expectedResource = resourceUrlFromServerUrl(mcpServerUrl);
-            return resource.toString() === expectedResource.toString();
-        }
+              if (!resource) return false;
+              const expectedResource = resourceUrlFromServerUrl(mcpServerUrl);
+              return resource.toString() === expectedResource.toString();
+          }
         : undefined;
 
     const provider = new DemoInMemoryAuthProvider(validateResource);

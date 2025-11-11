@@ -88,7 +88,7 @@ class InteractiveOAuthClient {
         output: process.stdout
     });
 
-    constructor(private serverUrl: string) { }
+    constructor(private serverUrl: string) {}
 
     /**
      * Prompts user for input via readline
