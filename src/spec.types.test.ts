@@ -149,10 +149,6 @@ const sdkTypeChecks = {
         sdk = spec;
         spec = sdk;
     },
-    ElicitRequestParams: (sdk: SDKTypes.ElicitRequestParams, spec: SpecTypes.ElicitRequestParams) => {
-        sdk = spec;
-        spec = sdk;
-    },
     PaginatedRequestParams: (sdk: SDKTypes.PaginatedRequestParams, spec: SpecTypes.PaginatedRequestParams) => {
         sdk = spec;
         spec = sdk;
