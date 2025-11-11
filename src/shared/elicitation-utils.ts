@@ -14,9 +14,10 @@ import type { ClientCapabilities } from '../types.js';
  * @param capabilities - The client's elicitation capabilities
  * @returns An object indicating which modes are supported
  */
-export function getSupportedElicitationModes(
-    capabilities: ClientCapabilities['elicitation']
-): { supportsFormMode: boolean; supportsUrlMode: boolean } {
+export function getSupportedElicitationModes(capabilities: ClientCapabilities['elicitation']): {
+    supportsFormMode: boolean;
+    supportsUrlMode: boolean;
+} {
     const hasFormCapability = Object.prototype.hasOwnProperty.call(capabilities, 'form');
     const hasUrlCapability = Object.prototype.hasOwnProperty.call(capabilities, 'url');
 
@@ -26,4 +27,3 @@ export function getSupportedElicitationModes(
 
     return { supportsFormMode, supportsUrlMode };
 }
-

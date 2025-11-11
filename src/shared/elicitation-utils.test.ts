@@ -1,5 +1,4 @@
 import { getSupportedElicitationModes } from './elicitation-utils.js';
-import type { ClientCapabilities } from '../types.js';
 
 describe('elicitation-utils', () => {
     describe('getSupportedElicitationModes', () => {
@@ -58,4 +57,3 @@ describe('elicitation-utils', () => {
         });
     });
 });
-
