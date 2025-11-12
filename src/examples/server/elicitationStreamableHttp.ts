@@ -7,7 +7,7 @@ import { getOAuthProtectedResourceMetadataUrl, mcpAuthMetadataRouter } from '../
 import { requireBearerAuth } from '../../server/auth/middleware/bearerAuth.js';
 import {
     CallToolResult,
-    ElicitationRequiredError,
+    UrlElicitationRequiredError,
     ElicitRequestURLParams,
     ElicitResult,
     isInitializeRequest,
@@ -54,7 +54,7 @@ const getServer = () => {
             const elicitationId = generateTrackedElicitation(sessionId, async (notification: ElicitationCompleteNotification) => {
                 await mcpServer.server.notification(notification);
             });
-            throw new ElicitationRequiredError([
+            throw new UrlElicitationRequiredError([
                 {
                     mode: 'url',
                     message: 'This tool requires a payment confirmation. Open the link to confirm payment!',
@@ -98,7 +98,7 @@ const getServer = () => {
                 completeURLElicitation(elicitationId);
             }, 5000);
 
-            throw new ElicitationRequiredError([
+            throw new UrlElicitationRequiredError([
                 {
                     mode: 'url',
                     message: 'This tool requires access to your example.com account. Open the link to authenticate!',

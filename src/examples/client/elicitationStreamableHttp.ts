@@ -13,7 +13,7 @@ import {
     ElicitRequestURLParams,
     McpError,
     ErrorCode,
-    ElicitationRequiredError,
+    UrlElicitationRequiredError,
     ElicitationCompleteNotificationSchema
 } from '../../types.js';
 import { getDisplayName } from '../../shared/metadataUtils.js';
@@ -742,7 +742,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<vo
             console.log(`\nFound ${resourceLinks.length} resource link(s). Use 'read-resource <uri>' to read their content.`);
         }
     } catch (error) {
-        if (error instanceof ElicitationRequiredError) {
+        if (error instanceof UrlElicitationRequiredError) {
             console.log('\n🔔 Elicitation Required Error Received:');
             console.log(`Message: ${error.message}`);
             for (const e of error.elicitations) {

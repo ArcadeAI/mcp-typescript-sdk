@@ -1664,7 +1664,7 @@ export class McpError extends Error {
         if (code === ErrorCode.UrlElicitationRequired && data) {
             const errorData = data as { elicitations?: unknown[] };
             if (errorData.elicitations) {
-                return new ElicitationRequiredError(errorData.elicitations as ElicitRequestURLParams[], message);
+                return new UrlElicitationRequiredError(errorData.elicitations as ElicitRequestURLParams[], message);
             }
         }
 
@@ -1674,11 +1674,11 @@ export class McpError extends Error {
 }
 
 /**
- * Specialized error type for elicitation required errors.
+ * Specialized error type when a tool requires a URL mode elicitation.
  * This makes it nicer for the client to handle since there is specific data to work with instead of just a code to check against.
  */
-export class ElicitationRequiredError extends McpError {
-    constructor(elicitations: ElicitRequestURLParams[], message: string = `Elicitation${elicitations.length > 1 ? 's' : ''} required`) {
+export class UrlElicitationRequiredError extends McpError {
+    constructor(elicitations: ElicitRequestURLParams[], message: string = `URL elicitation${elicitations.length > 1 ? 's' : ''} required`) {
         super(ErrorCode.UrlElicitationRequired, message, {
             elicitations: elicitations
         });
