@@ -22,7 +22,7 @@ import cors from 'cors';
 
 // Create an MCP server with implementation details
 const getServer = () => {
-    const server = new McpServer(
+    const mcpServer = new McpServer(
         {
             name: 'simple-streamable-http-server',
             version: '1.0.0'
@@ -32,17 +32,19 @@ const getServer = () => {
         }
     );
 
-    server.tool(
+    mcpServer.registerTool(
         'payment-confirm',
-        'A tool that confirms a payment directly with a user', // description
         {
-            cartId: z.string().describe('The ID of the cart to confirm')
+            description: 'A tool that confirms a payment directly with a user',
+            inputSchema: {
+                cartId: z.string().describe('The ID of the cart to confirm')
+            },
         },
         async ({ cartId }, extra): Promise<CallToolResult> => {
             /*
         In a real world scenario, there would be some logic here to check if the user has the provided cartId.
         For the purposes of this example, we'll throw an error (-> elicits the client to open a URL to confirm payment)
-      */
+        */
             const sessionId = extra.sessionId;
             if (!sessionId) {
                 throw new Error('Expected a Session ID');
@@ -50,7 +52,7 @@ const getServer = () => {
 
             // Create and track the elicitation
             const elicitationId = generateTrackedElicitation(sessionId, async (notification: ElicitationCompleteNotification) => {
-                await server.server.notification(notification);
+                await mcpServer.server.notification(notification);
             });
             throw new ElicitationRequiredError([
                 {
@@ -63,13 +65,15 @@ const getServer = () => {
         }
     );
 
-    server.tool(
+    mcpServer.registerTool(
         'third-party-auth',
-        'A demo tool that requires third-party OAuth credentials', // description
         {
-            param1: z.string().describe('First parameter')
+            description: 'A demo tool that requires third-party OAuth credentials',
+            inputSchema: {
+                param1: z.string().describe('First parameter')
+            }
         },
-        async (args, extra): Promise<CallToolResult> => {
+        async (_, extra): Promise<CallToolResult> => {
             /*
         In a real world scenario, there would be some logic here to check if we already have a valid access token for the user.
         Auth info (with a subject or `sub` claim) can be typically be found in `extra.authInfo`.
@@ -84,7 +88,7 @@ const getServer = () => {
 
             // Create and track the elicitation
             const elicitationId = generateTrackedElicitation(sessionId, async (notification: ElicitationCompleteNotification) => {
-                await server.server.notification(notification);
+                await mcpServer.server.notification(notification);
             });
 
             // Simulate OAuth callback and token exchange after 5 seconds
@@ -105,7 +109,7 @@ const getServer = () => {
         }
     );
 
-    return server;
+    return mcpServer;
 };
 
 /**
