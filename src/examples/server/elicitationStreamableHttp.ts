@@ -38,7 +38,7 @@ const getServer = () => {
             description: 'A tool that confirms a payment directly with a user',
             inputSchema: {
                 cartId: z.string().describe('The ID of the cart to confirm')
-            },
+            }
         },
         async ({ cartId }, extra): Promise<CallToolResult> => {
             /*
