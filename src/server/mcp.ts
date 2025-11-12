@@ -178,7 +178,9 @@ export class McpServer {
                 }
             } catch (error) {
                 if (error instanceof McpError) {
-                    throw error; // Let the error bubble up to the caller
+                    if (error.code === ErrorCode.UrlElicitationRequired) {
+                        throw error; // Return the error to the caller without wrapping in CallToolResult
+                    }
                 }
                 return this.createToolError(error instanceof Error ? error.message : String(error));
             }
