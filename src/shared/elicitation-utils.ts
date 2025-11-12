@@ -18,6 +18,10 @@ export function getSupportedElicitationModes(capabilities: ClientCapabilities['e
     supportsFormMode: boolean;
     supportsUrlMode: boolean;
 } {
+    if (!capabilities) {
+        return { supportsFormMode: false, supportsUrlMode: false };
+    }
+
     const hasFormCapability = Object.prototype.hasOwnProperty.call(capabilities, 'form');
     const hasUrlCapability = Object.prototype.hasOwnProperty.call(capabilities, 'url');
 

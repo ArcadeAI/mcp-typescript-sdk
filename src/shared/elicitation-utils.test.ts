@@ -2,9 +2,9 @@ import { getSupportedElicitationModes } from './elicitation-utils.js';
 
 describe('elicitation-utils', () => {
     describe('getSupportedElicitationModes', () => {
-        it('should default to form mode when capabilities are undefined', () => {
+        it('should support nothing when capabilities are undefined', () => {
             const result = getSupportedElicitationModes(undefined);
-            expect(result.supportsFormMode).toBe(true);
+            expect(result.supportsFormMode).toBe(false);
             expect(result.supportsUrlMode).toBe(false);
         });
 
